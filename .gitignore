@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+data/
+backups/
+test-results/
+playwright-report/
+.impeccable/
+artifacts/

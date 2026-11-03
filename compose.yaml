@@ -1,0 +1,49 @@
+name: jingheng
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3001
+      PUBLIC_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      TOKEN_SECRET: ${TOKEN_SECRET:?Set TOKEN_SECRET in .env}
+      TRUST_PROXY: 1
+      DB_PATH: /app/data/competition.sqlite
+    volumes:
+      - score_data:/app/data
+      - score_backups:/app/backups
+    networks: [score]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [score]
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+networks:
+  score:
+volumes:
+  score_data:
+  score_backups:
+  caddy_data:
+  caddy_config:
