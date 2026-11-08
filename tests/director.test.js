@@ -40,7 +40,8 @@ test("manual reveal protects public payloads, rejects stale releases and clears 
   await next();
   assert.equal((await f.request("/state")).data.projects[0].result.average, 90);
   const judges = (await f.state()).judges;
-  await f.ok("/admin/scores/rejudge", "POST", { projectId: p.id, judgeIds: [judges[0].id], reason: "核对后重评" });
+  // 重评原因为选填：省略 reason 也应成功
+  await f.ok("/admin/scores/rejudge", "POST", { projectId: p.id, judgeIds: [judges[0].id] });
   await f.submit((await f.tokens())[0], p.id, 88);
   assert.equal((await f.request("/state")).data.projects[0].result.awaitingReveal, true);
   assert.equal((await f.request("/admin/reveal", "POST", { projectId: p.id, releaseKey: original })).status, 409);

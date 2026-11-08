@@ -39,6 +39,7 @@ test("settings, rehearsal, anonymous animated reveal, rejudging, two rounds and 
   const shot = async (name) =>
     screen.screenshot({
       path: `.impeccable/review/${name}.png`,
+      animations: "disabled",
       fullPage: true,
     });
   try {
@@ -134,9 +135,25 @@ test("settings, rehearsal, anonymous animated reveal, rejudging, two rounds and 
     await operator
       .getByRole("button", { name: "开始评分", exact: true })
       .click();
+    const restricted = await mobile.newPage();
+    await restricted.addInitScript(() => {
+      Object.defineProperty(window, "sessionStorage", {
+        get() { throw new DOMException("Storage blocked", "SecurityError"); },
+      });
+    });
+    await restricted.goto(links[1]);
+    await expect(restricted.getByRole("heading", { name: "评委 02" })).toBeVisible();
+    await restricted.reload();
+    await expect(restricted.getByLabel("总分（满分 100 分）")).toBeEnabled();
+    await restricted.close();
     await phone.goto(links[0]);
     await expect(phone.getByRole("heading", { name: "评委 01" })).toBeVisible();
     await expect(phone.getByText("测试评分", { exact: true })).toBeVisible();
+    for (const value of ["-1", "101", "99.999", "abc"]) {
+      await phone.getByLabel("总分（满分 100 分）").fill(value);
+      await expect(phone.getByRole("button", { name: "提交评分" })).toBeDisabled();
+      await expect(phone.locator("#score-error")).toBeVisible();
+    }
     await phone.getByLabel("总分（满分 100 分）").fill("80");
     await mobile.setOffline(true);
     await phone.getByRole("button", { name: "提交评分", exact: true }).click();
@@ -152,6 +169,8 @@ test("settings, rehearsal, anonymous animated reveal, rejudging, two rounds and 
     await expect(
       phone.getByRole("heading", { name: "评分已提交" }),
     ).toBeVisible();
+    await expect(phone.locator(".submitted-summary time")).toContainText(/\d{2}:\d{2}/);
+    await expect(phone.locator(".submitted-summary")).toContainText("已锁定");
     await expect(screen.getByText("已打分", { exact: true })).toHaveCount(1);
     await expect(screen.locator(".judge-scores")).not.toContainText("80.00");
     await shot("blue-scoring");
@@ -206,6 +225,8 @@ test("settings, rehearsal, anonymous animated reveal, rejudging, two rounds and 
     await expect(
       phone.getByRole("heading", { name: "评分已提交" }),
     ).toBeVisible();
+    await expect(phone.locator(".judge-next")).toHaveText("下一队：第二代表队");
+    await phone.screenshot({ path: ".impeccable/review/phone-receipt.png" });
     await operator
       .getByRole("button", { name: "重新评分", exact: true })
       .click();
@@ -247,6 +268,12 @@ test("settings, rehearsal, anonymous animated reveal, rejudging, two rounds and 
     await shot("blue-ranking");
     await operator.getByRole("button", { name: "下一步：团体奖项" }).click();
     await expect(screen.getByText("陈志远、王晓峰、刘文静")).toBeVisible();
+    const preview = operator.frameLocator('iframe[title="当前大屏只读预览"]');
+    await expect(preview.locator(".honor-heading")).toHaveText("二等奖");
+    await expect(preview.locator("button")).toHaveCount(0);
+    const rect = await operator.locator(".screen-preview").boundingBox();
+    expect(rect.width / rect.height).toBeCloseTo(16 / 9, 3);
+    expect(await preview.locator("html").evaluate(() => [innerWidth, innerHeight])).toEqual([1920, 1080]);
     await shot("blue-team-awards");
     await operator.getByRole("button", { name: "下一步：个人奖项" }).click();
     await expect(screen.getByText("王晓峰", { exact: true })).toBeVisible();

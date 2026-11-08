@@ -148,6 +148,10 @@ test("button-free presentation runs rehearsal, rejudge, next team and awards in 
     });
     await press();
     await expect(page.locator(".stage-heading")).toHaveText("团体奖项");
+    await expect(page.locator(".honor-heading")).toHaveText("二等奖");
+    await expect(page.locator(".winner-members")).toHaveText("王强、陈杰");
+    await press();
+    await expect(page.locator(".honor-heading")).toHaveText("一等奖");
     await expect(page.locator(".winner-members").first()).toHaveText(
       "张明、李华",
     );
@@ -165,10 +169,9 @@ test("button-free presentation runs rehearsal, rejudge, next team and awards in 
     await expect(page.getByRole("button")).toHaveCount(0);
     await press("ArrowLeft");
     await expect(page.locator(".stage-heading")).toHaveText("团体奖项");
+    await expect(page.locator(".stage-results.reviewing .honor-heading")).toHaveCSS("animation-name", "none");
     await press("h");
-    await expect(
-      page.getByRole("heading", { name: "演示快捷键" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "演示快捷键" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     expect(new URL(page.url()).pathname).toBe("/admin/present");

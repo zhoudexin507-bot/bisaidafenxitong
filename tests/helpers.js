@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import { createApp } from "../server/app.js";
 export async function fixture(t, overrides = {}) {
   const config = {
     dbPath: ":memory:",
     adminPassword: "integration-test-password",
     tokenSecret: "integration-signing-secret-at-least-32-characters",
-    publicUrl: "http://localhost:3001",
     ...overrides,
   };
   let service,
@@ -14,10 +14,13 @@ export async function fixture(t, overrides = {}) {
     base,
     cookie = "";
   async function start() {
-    service = createApp(config);
-    server = service.app.listen(0, "127.0.0.1");
+    server = createServer().listen(0, "127.0.0.1");
     await once(server, "listening");
-    base = `http://127.0.0.1:${server.address().port}/api`;
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    config.publicUrl ??= origin;
+    base = origin + "/api";
+    service = createApp(config);
+    server.on("request", service.app);
   }
   async function stop() {
     service.close();
@@ -26,28 +29,33 @@ export async function fixture(t, overrides = {}) {
   await start();
   t.after(stop);
   async function request(path, method = "GET", body, token, headers = {}) {
+    const raw = body instanceof Uint8Array;
     const r = await fetch(base + path, {
       method,
       headers: {
         Origin: config.publicUrl,
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(body === undefined
+          ? {}
+          : raw
+            ? { "Content-Type": "application/octet-stream" }
+            : { "Content-Type": "application/json" }),
         ...(cookie ? { Cookie: cookie } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : raw ? body : JSON.stringify(body),
     });
-    const raw = await r.text();
+    const text = await r.text();
     let data;
     try {
-      data = JSON.parse(raw);
+      data = JSON.parse(text);
     } catch {
-      data = raw;
+      data = text;
     }
     return { status: r.status, data, headers: r.headers };
   }
-  async function ok(path, method = "POST", body = {}) {
-    const r = await request(path, method, body);
+  async function ok(path, method = "POST", body = {}, headers = {}) {
+    const r = await request(path, method, body, undefined, headers);
     assert.ok(r.status < 300, `${path}: ${r.status} ${JSON.stringify(r.data)}`);
     return r.data;
   }

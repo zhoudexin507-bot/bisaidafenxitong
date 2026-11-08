@@ -18,6 +18,7 @@ export const defaultSettings = {
   prizes: [1, 2, 3],
   demo: false,
   revealMode: "auto",
+  showTeamNumber: true,
   releasedScores: {},
   stage: { scene: "live", message: "", remainingMs: 0, endsAt: null, version: 0 },
   presentation: { view: "project", projectId: null },
@@ -37,6 +38,7 @@ export function openDatabase(path) {
     CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS archives (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS awards (id TEXT PRIMARY KEY, name TEXT NOT NULL, recipient TEXT NOT NULL, note TEXT NOT NULL DEFAULT '');
+    CREATE TABLE IF NOT EXISTS backgrounds (kind TEXT PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL, version INTEGER NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL);
   `);

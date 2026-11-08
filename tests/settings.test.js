@@ -45,6 +45,19 @@ test("live metadata and prize edits preserve scores; scoring changes require a n
     409,
   );
   await ok("/admin/awards", "POST", { name: "个人奖", recipient: "甲" });
+  await ok("/admin/awards/bulk", "POST", {
+    awards: [
+      { name: "第二单位", recipient: "乙" },
+      { name: "第三单位", recipient: "丙" },
+    ],
+  });
+  assert.equal((await state()).awards.length, 3);
+  await ok("/admin/awards/bulk", "POST", {
+    replace: true,
+    awards: [{ name: "唯一单位", recipient: "丁" }],
+  });
+  assert.equal((await state()).awards.length, 1);
+  assert.equal((await state()).awards[0].name, "唯一单位");
   const result = await ok("/admin/competitions/new", "POST", { epoch });
   const archive = (await request(`/admin/archives/${result.archiveId}`)).data;
   assert.equal(archive.settings.title, "现场改名");
@@ -52,7 +65,7 @@ test("live metadata and prize edits preserve scores; scoring changes require a n
     archive.entries.filter((e) => e.phase === "official")[0].total,
     8800,
   );
-  assert.equal(archive.awards[0].recipient, "甲");
+  assert.equal(archive.awards[0].recipient, "丁");
   assert.equal(archive.judges.length, 3);
   d = await state();
   assert.equal(d.archives.length, 1);

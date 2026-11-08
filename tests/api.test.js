@@ -33,7 +33,7 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
     assert.match(login.headers.get("set-cookie"), /SameSite=Strict/);
   });
   await t.test(
-    "scale, symmetric and asymmetric trim, fixed quotas, 48-hour credentials",
+    "scale, symmetric and asymmetric trim, fixed quotas, 7-day credentials",
     async () => {
       await f.configure();
       let d = await state();
@@ -43,8 +43,8 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
       assert.ok(
         d.judges.every(
           (j) =>
-            j.expires_at > Date.now() + 47 * 3600000 &&
-            j.expires_at <= Date.now() + 48 * 3600000,
+            j.expires_at > Date.now() + 6.9 * 86400000 &&
+            j.expires_at <= Date.now() + 7 * 86400000,
         ),
       );
       assert.equal(
@@ -89,10 +89,9 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
         409,
       );
       await ok("/admin/test/start");
-      assert.equal(
-        (await request("/admin/test/finish", "POST", {})).status,
-        409,
-      );
+      // 完成测试不再要求任何评委先完成评分
+      await ok("/admin/test/finish");
+      await ok("/admin/test/start");
       await ok(`/admin/projects/${p[0].id}/status`, "POST", { status: "open" });
       const stale = await f.body(ts[0], p[0].id, 50);
       await f.complete(p[0].id, [10, 20, 30]);
@@ -284,7 +283,7 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
     const id = d.judges[0].id;
     await ok(`/admin/judges/${id}/access`, "POST", {
       rotate: true,
-      days: 3650,
+      days: 30,
     });
     assert.equal(
       (await request("/judge/state", "GET", undefined, ts[0])).status,
@@ -292,7 +291,7 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
     );
     ts[0] = (await f.tokens())[0];
     let j = (await state()).judges[0];
-    assert.ok(j.expires_at <= Date.now() + 48 * 3600000);
+    assert.ok(j.expires_at <= Date.now() + 30 * 86400000);
     await ok(`/admin/judges/${id}/access`, "POST", { enabled: false });
     assert.equal(
       (await request("/judge/state", "GET", undefined, ts[0])).status,
@@ -306,6 +305,12 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
     );
     await ok(`/admin/judges/${id}/access`, "POST", { rotate: true });
     ts[0] = (await f.tokens())[0];
+    j = (await state()).judges[0];
+    // 未指定 days 时默认续期 7 天
+    assert.ok(
+      j.expires_at > Date.now() + 6.9 * 86400000 &&
+        j.expires_at <= Date.now() + 7 * 86400000,
+    );
   });
   await t.test(
     "restart retains rounds, sessions, links and SSE catchup",

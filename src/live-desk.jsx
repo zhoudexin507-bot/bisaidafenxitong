@@ -1,18 +1,21 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { CheckCircle2, Circle, Clock3, ExternalLink, Monitor, Pause, Play, RotateCw, Users } from "lucide-react";
 import "./live-desk.css";
 
 export function StageClock({ stage, serverTime }) {
-  const anchor = useRef({ server: Date.parse(serverTime), local: Date.now() });
-  const [, tick] = useState(0);
-  useEffect(() => { anchor.current = { server: Date.parse(serverTime), local: Date.now() }; }, [serverTime]);
+  const remaining = stage.endsAt ? stage.endsAt - Date.parse(serverTime) : stage.remainingMs || 0;
+  const [seconds, setSeconds] = useState(() => Math.max(0, Math.ceil(remaining / 1000)));
   useEffect(() => {
-    if (!stage.endsAt) return;
-    const timer = setInterval(() => tick((n) => n + 1), 250);
-    return () => clearInterval(timer);
-  }, [stage.endsAt]);
-  const now = anchor.current.server + Date.now() - anchor.current.local;
-  const seconds = Math.max(0, Math.ceil((stage.endsAt ? stage.endsAt - now : stage.remainingMs || 0) / 1000));
+    const deadline = Date.now() + remaining;
+    let timer;
+    function tick() {
+      const ms = Math.max(0, deadline - Date.now());
+      setSeconds(Math.ceil(ms / 1000));
+      if (stage.endsAt && ms > 0) timer = setTimeout(tick, ms % 1000 || 1000);
+    }
+    tick();
+    return () => clearTimeout(timer);
+  }, [stage.endsAt, remaining]);
   return <div className="stage-clock">
     <strong aria-label={`剩余 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`}>
       {String(Math.floor(seconds / 60)).padStart(2, "0")}<span>:</span>{String(seconds % 60).padStart(2, "0")}
@@ -23,12 +26,14 @@ export function StageClock({ stage, serverTime }) {
 
 export function StageCover({ data }) {
   const stage = data.settings.stage;
-  return <section className={`stage-cover cover-${stage.scene}`}>
-    <div className="stage-cover-mark" aria-hidden="true"><Monitor /></div>
-    <h1>{stage.scene === "break" ? "中场休息" : "比赛即将开始"}</h1>
-    {stage.message && <p>{stage.message}</p>}
-    {(stage.remainingMs > 0 || stage.endsAt) && <StageClock stage={stage} serverTime={data.serverTime} />}
-  </section>;
+  return (
+    <section className={`stage-cover cover-${stage.scene}`}>
+      <div className="stage-cover-mark" aria-hidden="true"><Monitor /></div>
+      <h1>{stage.scene === "break" ? "中场休息" : "比赛即将开始"}</h1>
+      {stage.message && <p>{stage.message}</p>}
+      {(stage.remainingMs > 0 || stage.endsAt) && <StageClock stage={stage} serverTime={data.serverTime} />}
+    </section>
+  );
 }
 
 export function StageControls({ data, act }) {
@@ -46,13 +51,13 @@ export function StageControls({ data, act }) {
   }
   const validMinutes = minutes !== "" && Number.isFinite(Number(minutes)) && Number(minutes) >= 0 && Number(minutes) <= 120;
   return <section className="director-tools" aria-labelledby="stage-control-title">
-    <div className="desk-heading"><div><h2 id="stage-control-title">现场画面</h2><p>保留赛程位置，随时返回当前队伍。</p></div>
-      <a href="/screen" target="_blank" rel="noreferrer" className="button"><ExternalLink size={16} />打开只读大屏</a>
+    <div className="desk-heading"><h2 id="stage-control-title">现场画面</h2>
+      <span>切换后立即生效</span>
     </div>
     <div className="scene-switch" role="group" aria-label="大屏场景">
-      {[["live", "比赛画面"], ["standby", "开场候场"], ["break", "中场休息"]].map(([scene, label]) =>
+      {[["live", "比赛画面"], ["home", "背景首页"], ["standby", "开场候场"], ["break", "中场休息"]].map(([scene, label]) =>
         <button key={scene} className={`button ${stage.scene === scene ? "primary" : ""}`} aria-pressed={stage.scene === scene}
-          disabled={busy || stage.scene === scene || (scene !== "live" && !validMinutes)} onClick={() => send({ action: "scene", scene, message: scene === "live" ? "" : message, seconds: scene === "live" ? 0 : Math.round(Number(minutes) * 60) })}>{label}</button>)}
+          disabled={busy || stage.scene === scene || (!["live", "home"].includes(scene) && !validMinutes)} onClick={() => send({ action: "scene", scene, message: ["live", "home"].includes(scene) ? "" : message, seconds: ["live", "home"].includes(scene) ? 0 : Math.round(Number(minutes) * 60) })}>{label}</button>)}
     </div>
     <div className="stage-inputs">
       <label className="field"><span>候场 / 休息提示</span><input maxLength={100} value={message} placeholder="例如：请评委就座，比赛即将开始" onChange={(e) => setMessage(e.target.value)} /></label>
@@ -60,7 +65,7 @@ export function StageControls({ data, act }) {
         {!validMinutes && <small id="stage-minutes-error" className="timer-field-error">请输入 0–120 分钟</small>}
       </label>
     </div>
-    {stage.scene !== "live" && <div className="timer-controls">
+    {!["live", "home"].includes(stage.scene) && <div className="timer-controls">
       <StageClock stage={stage} serverTime={data.serverTime} />
       <div className="actions">
         <button className="button" disabled={busy || !validMinutes} onClick={() => send({ action: "scene", scene: stage.scene, message, seconds: Math.round(Number(minutes) * 60) })}>更新画面与时长</button>
@@ -69,7 +74,7 @@ export function StageControls({ data, act }) {
         <button className="button" disabled={busy || !validMinutes} onClick={() => send({ action: "reset", seconds: Math.round(Number(minutes) * 60) })}><RotateCw size={16} />重置计时</button>
       </div>
     </div>}
-    <p className="desk-note">仅切换展示画面；需要停止收分时，请暂停比赛。倒计时结束不会自动切换或截止评分。</p>
+    <p className="desk-note">切换画面不改变收分状态；停止收分请暂停比赛。</p>
   </section>;
 }
 
@@ -84,7 +89,7 @@ export function LiveDesk({ data, act }) {
     { title: "参赛名单", detail: `${data.projects.length} 支队伍`, ok: data.projects.length > 0, href: "/admin/projects" },
     { title: "评委凭证", detail: valid ? "全部可用" : "检查停用或过期凭证", ok: valid, href: "/admin/judges" },
     { title: "计分与奖项", detail: `${data.settings.rounds} 轮 · 百分制`, ok: data.projects.length > 0 && data.judges.length > (data.settings.trimEnabled ? data.settings.trimHigh + data.settings.trimLow : 0) && data.settings.prizes.reduce((a, b) => a + b, 0) <= data.projects.length, href: "/admin/rules" },
-    { title: "全员测试", detail: data.settings.testCompleted ? "已完成" : "请在投屏演示中测试", ok: data.settings.testCompleted, href: "/admin/present" },
+    { title: "赛前测试", detail: data.settings.testCompleted ? "已完成" : "请在投屏演示中测试", ok: data.settings.testCompleted, href: "/admin/present" },
   ];
   const seats = all ? data.judges : data.judges.slice(0, 12);
   return <div className="live-desk">
@@ -108,11 +113,11 @@ export function LiveDesk({ data, act }) {
         return <div key={j.id} className={`seat ${submitted ? "seat-submitted" : ""}`}>
           <strong>评委 {String(j.number).padStart(2, "0")}</strong>
           <span>{invalid ? "凭证不可用" : j.online ? "近期在线" : j.lastSeen ? "连接待确认" : "尚未连接"}</span>
-          <small>{submitted ? <CheckCircle2 size={14} /> : <Clock3 size={14} />}{submitted ? "已提交" : current?.status === "open" ? "待提交" : "待评分"}</small>
+          {data.settings.status !== "final" && <small>{submitted ? <CheckCircle2 size={14} /> : <Clock3 size={14} />}{submitted ? "已提交" : current?.status === "open" ? "待提交" : "待评分"}</small>}
         </div>;
       })}</div> : <p className="desk-note">配置评委席位后，可在这里查看连接与提交情况。</p>}
       {data.judges.length > 12 && <button className="button" onClick={() => setAll(!all)}>{all ? "收起席位" : `查看全部 ${data.judges.length} 席`}</button>}
-      <div className="desk-footer"><span>在线状态以最近 45 秒的连接为准，不代表已提交。</span><a href="/admin/judges">管理评委与二维码</a></div>
+      <div className="desk-footer"><a href="/admin/judges">管理评委与二维码</a></div>
     </section>
     {data.settings.status !== "final" && next && <div className="next-cue"><span>下一支候场队伍</span><strong>{String(next.position).padStart(2, "0")} · {next.team}</strong><a href="/admin/display">现场画面与倒计时 <ExternalLink size={14} /></a></div>}
   </div>;

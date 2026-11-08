@@ -14,6 +14,7 @@ import {
   ExternalLink,
   FileCheck2,
   Flag,
+  Image as ImageIcon,
   LayoutDashboard,
   ListOrdered,
   LockKeyhole,
@@ -31,12 +32,17 @@ import {
   ShieldCheck,
   Trash2,
   Trophy,
+  Upload,
   Users,
   X,
 } from "lucide-react";
+import { resultPages, resultViews } from "../shared/slides.js";
 import "./styles.css";
 import "./stages.css";
 import { LiveDesk, StageControls, StageCover } from "./live-desk.jsx";
+import { applyTheme, readTheme, THEMES } from "./theme.js";
+import "./themes.css";
+import { LayoutPreview, ProjectionBoard } from "./projection.jsx";
 
 const statusNames = {
   draft: "筹备中",
@@ -55,17 +61,23 @@ const time = (value) =>
   new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
 let judgeToken = "";
 if (location.pathname === "/judge") {
-  const incoming = location.hash.slice(1);
-  if (incoming) {
-    sessionStorage.setItem("jh_judge", incoming);
-    history.replaceState(null, "", "/judge");
+  judgeToken = location.hash.slice(1);
+  try {
+    if (judgeToken) {
+      sessionStorage.setItem("jh_judge", judgeToken);
+      history.replaceState(null, "", "/judge");
+    } else {
+      judgeToken = sessionStorage.getItem("jh_judge") || "";
+    }
+  } catch {
+    // Keep the scanned link usable when the browser blocks session storage.
   }
-  judgeToken = sessionStorage.getItem("jh_judge") || "";
 }
 
-async function api(path, method = "GET", body) {
+async function api(path, method = "GET", body, signal) {
   const response = await fetch(`/api${path}`, {
     method,
+    signal,
     credentials: "same-origin",
     headers: {
       ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -88,28 +100,43 @@ function useLive(path) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [connected, setConnected] = useState(false);
-  const seq = useRef(0);
-  async function refresh() {
-    const n = ++seq.current;
-    try {
-      const next = await api(path);
-      if (n === seq.current) {
-        setData(next);
-        setError(null);
-      }
-    } catch (e) {
-      if (n === seq.current) {
-        setError(e);
-        if (e.status === 401 || e.status === 403) setData(null);
-      }
-    }
-  }
+  const refreshRef = useRef(null);
   useEffect(() => {
     let alive = true;
     let timer;
+    let controller;
+    let pending = Promise.resolve();
+    let queued;
+    function refresh() {
+      if (queued) return queued;
+      queued = pending.then(async () => {
+        queued = null;
+        if (!alive) return;
+        controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+        try {
+          const next = await api(path, "GET", undefined, controller.signal);
+          if (alive) {
+            setData(next);
+            setError(null);
+          }
+        } catch (e) {
+          if (alive) {
+            setError(e.name === "AbortError" ? new Error("连接超时，正在重试") : e);
+            if (e.status === 401 || e.status === 403) setData(null);
+          }
+        } finally {
+          clearTimeout(timeout);
+        }
+      });
+      pending = queued;
+      return queued;
+    }
+    refreshRef.current = refresh;
     const update = () => {
-      clearTimeout(timer);
+      if (timer) return;
       timer = setTimeout(() => {
+        timer = null;
         if (alive) refresh();
       }, 80);
     };
@@ -124,7 +151,8 @@ function useLive(path) {
     window.addEventListener("online", onFocus);
     return () => {
       alive = false;
-      ++seq.current;
+      refreshRef.current = null;
+      controller?.abort();
       events.close();
       clearTimeout(timer);
       clearInterval(poll);
@@ -132,7 +160,7 @@ function useLive(path) {
       window.removeEventListener("online", onFocus);
     };
   }, [path]);
-  return { data, error, connected: connected && !error, refresh };
+  return { data, error, connected: connected && !error, refresh: () => refreshRef.current?.() };
 }
 
 function Button({ children, icon: Icon, kind = "", ...props }) {
@@ -156,7 +184,7 @@ function Empty({ title, children }) {
     <div className="empty">
       <ClipboardList size={32} />
       <h3>{title}</h3>
-      <p>{children}</p>
+      {children && <p>{children}</p>}
     </div>
   );
 }
@@ -169,14 +197,11 @@ function ErrorBox({ error }) {
     )
   );
 }
-function PageTitle({ title, subtitle, children }) {
+function PageTitle({ title, children }) {
   return (
     <div className="page-title">
-      <div>
-        <h1>{title}</h1>
-        {subtitle && <p>{subtitle}</p>}
-      </div>
-      <div className="actions">{children}</div>
+      <h1>{title}</h1>
+      {children && <div className="actions">{children}</div>}
     </div>
   );
 }
@@ -231,6 +256,29 @@ const navigation = [
   { label: "奖项设置", path: "/admin/awards", icon: Award },
   { label: "操作记录", path: "/admin/logs", icon: FileCheck2 },
 ];
+function ThemeSwitch() {
+  const [theme, setTheme] = useState(readTheme);
+  return (
+    <div className="theme-switch" role="group" aria-label="配色主题">
+      {THEMES.map((option) => (
+        <button
+          key={option.id}
+          type="button"
+          className="theme-option"
+          aria-pressed={theme === option.id}
+          title={option.hint}
+          onClick={() => setTheme(applyTheme(option.id))}
+        >
+          <span
+            className={`swatch swatch-${option.id}`}
+            aria-hidden="true"
+          />
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 function Shell({ children, data, connected, adminMode }) {
   const [menu, setMenu] = useState(false);
   return (
@@ -240,17 +288,15 @@ function Shell({ children, data, connected, adminMode }) {
           <span className="brand-mark">
             <Activity size={23} />
           </span>
-          <span>
-            竞衡<small>比赛评分系统</small>
-          </span>
+          <span>竞衡</span>
         </a>
-        <div className="nav-caption">赛事工作台</div>
-        <nav>
+        <nav aria-label="赛事管理">
           {navigation.map((n, i) => (
             <a
               key={n.path}
               className={`${location.pathname === n.path || (location.pathname === "/admin" && i === 0) ? "active" : ""} ${i === 2 ? "nav-divider" : ""}`}
               href={n.path}
+              aria-current={location.pathname === n.path ? "page" : undefined}
             >
               <n.icon size={19} />
               <span>{n.label}</span>
@@ -259,13 +305,13 @@ function Shell({ children, data, connected, adminMode }) {
           ))}
         </nav>
         <div className="sidebar-bottom">
+          <ThemeSwitch />
           <a className="account" href="/admin">
             <span className="avatar">
               <Users size={17} />
             </span>
             <span>
-              {adminMode ? "赛事管理员" : "赛事管理"}
-              <small>{adminMode ? "管理工作台" : "管理员登录"} </small>
+              {adminMode ? "赛事管理员" : "管理员登录"}
             </span>
             <ChevronRight size={16} />
           </a>
@@ -278,6 +324,7 @@ function Shell({ children, data, connected, adminMode }) {
               className="icon-button mobile-menu"
               onClick={() => setMenu(!menu)}
               aria-label="展开导航"
+              aria-expanded={menu}
             >
               <Menu size={20} />
             </button>
@@ -331,6 +378,10 @@ function ScorePanel({ project, data, onRevealChange }) {
   const [animation, setAnimation] = useState({ key: "", step: 0 });
   const step = animation.key === signature ? animation.step : 0;
   const trims = complete && project.result.dropped.length > 0;
+  const count = data.judges.length;
+  const rows = count <= 5 ? 1 : count <= 12 ? 2 : Math.max(3, Math.ceil(count / 10));
+  const columns = Math.max(1, Math.ceil(count / rows));
+  const scoresByJudge = new Map(project.scores.map((score) => [score.judge_id, score]));
   useEffect(() => {
     setAnimation({ key: signature, step: 0 });
     if (!complete) return;
@@ -366,7 +417,8 @@ function ScorePanel({ project, data, onRevealChange }) {
         : "评委评分中";
   return (
     <section
-      className={`score-panel stage-score ${complete ? "revealed" : "concealed"} reveal-step-${step}`}
+      className={`score-panel stage-score ${count >= 13 ? "many-judges" : ""} ${complete ? "revealed" : "concealed"} reveal-step-${step}`}
+      style={{ "--judge-cols": columns, "--judge-rows": rows, "--compact-cols": Math.min(columns, 8) }}
       data-reveal-step={complete ? step : "waiting"}
     >
       <div className="score-panel-top">
@@ -375,20 +427,11 @@ function ScorePanel({ project, data, onRevealChange }) {
             <Badge status={complete ? "closed" : ready ? "ready" : "open"}>
               {phase}
             </Badge>
-            {data.settings.mode === "test" ? (
-              <span>测试评分</span>
-            ) : (
-              data.settings.rounds > 1 && (
-                <span>
-                  第 {data.settings.currentRound} / {data.settings.rounds} 轮
-                </span>
-              )
-            )}
           </div>
           <h2>
-            <span className="team-prefix">
-              {String(project.position).padStart(2, "0")}
-            </span>
+            {data.settings.showTeamNumber !== false && (
+              <span className="team-prefix">{String(project.position).padStart(2, "0")}</span>
+            )}
             {project.team}
           </h2>
         </div>
@@ -402,7 +445,7 @@ function ScorePanel({ project, data, onRevealChange }) {
                 : ""
               : ready
                 ? "请评委准备"
-                : "已完成评分"}
+                : "已提交"}
           </span>
           {complete ? (
             step === 3 ? (
@@ -425,9 +468,14 @@ function ScorePanel({ project, data, onRevealChange }) {
           )}
         </div>
       </div>
+      {!complete && (
+        <div className="score-progress" aria-hidden="true">
+          {data.judges.map((judge) => <i key={judge.id} className={scoresByJudge.has(judge.id) ? "filled" : ""} />)}
+        </div>
+      )}
       <div className="judge-scores">
         {data.judges.map((j, i) => {
-          const score = project.scores.find((v) => v.judge_id === j.id),
+          const score = scoresByJudge.get(j.id),
             low = project.result.droppedLow?.includes(j.id),
             high = project.result.droppedHigh?.includes(j.id),
             drop = low || high;
@@ -436,21 +484,16 @@ function ScorePanel({ project, data, onRevealChange }) {
               key={j.id}
               className={`judge-score ${score ? "submitted" : ""} ${complete && step >= 1 && drop ? "extreme" : ""} ${complete && step >= 2 && drop ? "excluded" : ""}`}
             >
-              <div>
-                <span>评委 {String(j.number || i + 1).padStart(2, "0")}</span>
+              <div className="judge-seat">
+                <span>评委</span>{" "}
+                <b>{String(j.number || i + 1).padStart(2, "0")}</b>
               </div>
               {complete ? (
                 <>
-                  <strong>{fmt(score?.total / 100)}</strong>
-                  <small>
-                    {step >= 2 && drop
-                      ? "已剔除"
-                      : step >= 1 && drop
-                        ? high
-                          ? "最高分"
-                          : "最低分"
-                        : " "}
-                  </small>
+                  <strong className="judge-value" style={{ "--delay": Math.min(i * 40, 1160) + "ms" }}>{fmt(score?.total / 100)}</strong>
+                  {step >= 1 && drop && (
+                    <small>{high ? "最高分" : "最低分"}{step >= 2 && "已剔除"}</small>
+                  )}
                 </>
               ) : (
                 <strong className="submission-state">
@@ -694,11 +737,6 @@ function Overview({ data, act }) {
             <a className="button" href="/admin/print">
               打印评委二维码
             </a>
-            <span>
-              {data.settings.testCompleted
-                ? "测试已完成，可以正式开赛"
-                : "先完成测试评分，再开始正式比赛"}
-            </span>
           </div>
         ) : current ? (
           <div className="current-operation">
@@ -856,95 +894,57 @@ const displayViews = [
   ["teamAwards", "团体奖项"],
   ["individualAwards", "个人奖项"],
 ];
+const prizeNames = ["", "一等奖", "二等奖", "三等奖"];
+
 function ResultsView({ data, view }) {
-  if (view === "ranking")
+  if (view === "ranking") {
+    const teams = data.ranking;
+    if (!teams.length) return <Empty title="等待评分完成" />;
     return (
-      <section
-        className={`results-table standings ${data.ranking.length <= 3 ? "standings-short" : ""}`}
-      >
-        {data.ranking.length ? (
-          <div className="table-scroll">
-            <table aria-label="比赛得分排名">
-              <thead>
-                <tr>
-                  <th>名次</th>
-                  <th>参赛队伍</th>
-                  <th className="align-right">得分</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.ranking.map((p) => (
-                  <tr key={p.id} className={`standing-row standing-${p.rank}`}>
-                    <td>
-                      <span className={`rank-num rank-${p.rank}`}>
-                        {p.rank}
-                      </span>
-                    </td>
-                    <td>
-                      <strong>{p.team}</strong>
-                    </td>
-                    <td className="table-score align-right">
-                      {p.result.complete ? fmt(p.result.average) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty title="等待评分完成" />
-        )}
-      </section>
-    );
-  if (view === "teamAwards") {
-    const levels = [1, 2, 3].filter((level) =>
-      data.ranking.some((p) => p.prize === level),
-    );
-    if (!levels.length) return <Empty title="暂无团体奖项" />;
-    return (
-      <div className="team-honors" style={{ "--honor-columns": levels.length }}>
-        {levels.map((level) => (
-          <section
-            key={level}
-            className={`team-honor honor-${level} ${data.ranking.filter((p) => p.prize === level).length > 2 ? "honor-stacked" : ""}`}
-          >
-            <header className="honor-heading">
-              <span className="honor-emblem" aria-hidden="true">
-                <Trophy size={36} />
-              </span>
-              <h2>{["", "一", "二", "三"][level]}等奖</h2>
-            </header>
-            {data.ranking
-              .filter((p) => p.prize === level)
-              .map((p) => (
-                <div className="honor-winner" key={p.id}>
-                  <h3>{p.team}</h3>
-                  <div className="winner-members">
-                    {p.members || "名单待录入"}
-                  </div>
-                </div>
-              ))}
-          </section>
+      <ol aria-label="比赛得分排名" className={`standings ${teams.length < 4 ? "standings-short" : ""}`}>
+        {teams.map((team, i) => (
+          <li key={team.id} className={`standing-row place-${team.rank}`}
+            style={{ "--delay": (teams.length - i - 1) * 70 + "ms" }}>
+            <span className="rank-num" aria-label={`第 ${team.rank} 名`}>{team.rank}</span>
+            <strong className="standing-team">{team.team}</strong>
+            {team.prize > 0 && <span className={`prize-label medal-${team.prize}`}>{prizeNames[team.prize]}</span>}
+            <strong className="standing-score">{team.result.complete ? fmt(team.result.average) : "—"}</strong>
+          </li>
         ))}
+      </ol>
+    );
+  }
+  if (view === "teamAwards") {
+    if (!data.ranking.some((p) => p.prize)) return <Empty title="暂无团体奖项" />;
+    return (
+      <div className="team-honors">
+        {[3, 2, 1].map((level) => {
+          const teams = data.ranking.filter((p) => p.prize === level);
+          if (!teams.length) return null;
+          return (
+            <section key={level} className={`team-honor medal-${level}`}>
+              <h2 className="honor-heading">{prizeNames[level]}</h2>
+              <div className="honor-grid" style={{ "--columns": Math.min(teams.length, 4) }}>
+                {teams.map((p, i) => (
+                  <article className="honor-winner" key={p.id} style={{ "--index": i }}>
+                    <h3>{p.team}</h3>
+                    <p className="winner-members">{p.members || "名单待录入"}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          );
+        })}
       </div>
     );
   }
   if (!data.awards.length) return <Empty title="暂无个人奖项" />;
   return (
-    <div
-      className={`personal-honors ${data.awards.length === 1 ? "personal-single" : ""} ${data.awards.length > 3 ? "personal-many" : ""}`}
-      style={{ "--honor-columns": Math.min(data.awards.length, 3) }}
-    >
-      {data.awards.map((a) => (
-        <section className="personal-honor" key={a.id}>
-          <span className="honor-emblem" aria-hidden="true">
-            <Award size={36} />
-          </span>
-          <div>
-            <span className="personal-award-title">{a.name}</span>
-            <h3>{a.recipient}</h3>
-            {a.note && <p>{a.note}</p>}
-          </div>
+    <div className="personal-honors honor-grid medal-1" style={{ "--columns": Math.min(data.awards.length, 3) }}>
+      {data.awards.map((award, i) => (
+        <section className="personal-honor" key={award.id} style={{ "--index": i }}>
+          <h2 className="personal-award-title">{award.name}</h2>
+          <h3>{award.recipient}</h3>
         </section>
       ))}
     </div>
@@ -1023,7 +1023,134 @@ function Ranking({ data, act }) {
     </>
   );
 }
-function PresentationControls({ data, act }) {
+function ScreenPreview({ children }) {
+  const wrap = useRef(null);
+  const frame = useRef(null);
+  useEffect(() => {
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      // Fit a 16:9 stage inside whatever space the layout grants the preview.
+      const w = Math.max(0, Math.min(width, (height * 16) / 9));
+      frame.current.style.width = `${w}px`;
+      frame.current.style.height = `${(w * 9) / 16}px`;
+      frame.current.style.setProperty("--preview-scale", w / 1920);
+    });
+    observer.observe(wrap.current);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div ref={wrap} className="preview-fit">
+      <div ref={frame} className="screen-preview">
+        {children ? <div className="projection-preview-canvas">{children}</div>
+          : <iframe src="/screen" title="当前大屏只读预览" tabIndex={-1} />}
+      </div>
+    </div>
+  );
+}
+
+const backgroundKinds = [
+  ["home", "背景首页"],
+  ["awards", "排名与颁奖"],
+];
+
+function BackgroundSettings({ data, refresh, act }) {
+  const [busy, setBusy] = useState(null);
+  const [pendingTitle, setPendingTitle] = useState(null);
+  const [error, setError] = useState(null);
+  const backgrounds = data.backgrounds || {};
+  async function send(kind, method, file) {
+    if (busy) return;
+    setBusy(kind);
+    setError(null);
+    try {
+      const response = await fetch(`/api/admin/backgrounds/${kind}`, {
+        method,
+        credentials: "same-origin",
+        headers: { "Content-Type": file ? file.type : "application/json" },
+        body: file || "{}",
+      });
+      const value = await response.json().catch(() => ({}));
+      if (!response.ok)
+        throw new Error(value.error || "操作失败，请重试");
+      await refresh?.();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(null);
+    }
+  }
+  return (
+    <section className="panel display-control background-settings">
+      <h2>背景图片</h2>
+      <p className="table-sub">
+        建议使用 16:9 图片，每张不超过 10 MB。排名、团体奖和个人奖共用一张颁奖背景图。
+      </p>
+      {backgroundKinds.map(([kind, label]) => {
+        const version = backgrounds[kind];
+        return (
+          <div className="background-row" key={kind}>
+            <span
+              className={`background-thumb ${version ? "is-set" : ""}`}
+              role="img"
+              aria-label={`${label}背景${version ? "已设置" : "未设置"}`}
+              style={version ? { backgroundImage: `url("/api/backgrounds/${kind}?v=${version}")` } : undefined}
+            >
+              {!version && <ImageIcon size={18} />}
+            </span>
+            <div className="background-info">
+              <strong>{label}</strong>
+              <span>{version ? "已设置" : "未设置"}</span>
+            </div>
+            <div className="actions">
+              <label className={`button ${busy === kind ? "is-busy" : ""}`}>
+                <Upload size={15} />
+                {version ? "更换图片" : "上传图片"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  hidden
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file) return;
+                    if (file.size > 10 * 1024 * 1024) {
+                      setError(new Error("图片不能超过 10 MB"));
+                      return;
+                    }
+                    send(kind, "PUT", file);
+                  }}
+                />
+              </label>
+              {version && (
+                <Button
+                  kind="danger-text"
+                  disabled={busy === kind}
+                  onClick={() => send(kind, "DELETE")}
+                >
+                  清除
+                </Button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      <label className="home-title-toggle"><input type="checkbox" disabled={pendingTitle !== null}
+        checked={pendingTitle ?? (data.settings.showHomeTitle !== false)}
+        onChange={async e => {
+          const showHomeTitle = e.target.checked;
+          setPendingTitle(showHomeTitle);
+          try { await act("/admin/display-options", "PUT", { showHomeTitle }); }
+          catch (reason) { setError(reason); }
+          finally { setPendingTitle(null); }
+        }} />
+        背景首页显示系统标题和副标题</label>
+      <ErrorBox error={error} />
+    </section>
+  );
+}
+
+function PresentationControls({ data, act, refresh }) {
+  const [editing, setEditing] = useState(false);
   const presentation = data.settings.presentation;
   const current =
     data.projects.find((p) => p.id === presentation.projectId) ||
@@ -1031,9 +1158,10 @@ function PresentationControls({ data, act }) {
     data.projects[0];
   const final = data.settings.status === "final";
   const view = presentation.view;
-  const nextIndex = displayViews.findIndex(([id]) => id === view) + 1;
+  const stages = resultViews(data);
+  const nextView = stages[stages.indexOf(view) + 1];
   return (
-    <>
+    <div className="display-page">
       <PageTitle title="大屏控制">
         <a
           className="button primary"
@@ -1045,119 +1173,134 @@ function PresentationControls({ data, act }) {
           开始投屏演示
         </a>
       </PageTitle>
-      <StageControls data={data} act={act} />
-      <CompetitionControls data={data} act={act} />
-      {!final ? (
-        <section className="panel display-control">
-          <Field label="当前展示队伍">
-            <select
-              value={current?.id || ""}
-              onChange={(e) =>
-                act("/admin/presentation", "POST", {
-                  view: "project",
-                  projectId: e.target.value,
-                })
-              }
-            >
-              <option value="" disabled>
-                请选择队伍
-              </option>
-              {data.projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {String(p.position).padStart(2, "0")} · {p.team} · {p.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {current && (
-            <div className="actions">
-              <Button
-                disabled={
-                  data.settings.status === "draft" || current.scores.length > 0
-                }
-                onClick={() =>
-                  act(`/admin/projects/${current.id}/status`, "POST", {
-                    status: "ready",
-                  })
-                }
-              >
-                准备评分
-              </Button>
-              <Button
-                kind="primary"
-                icon={Play}
-                disabled={
-                  data.settings.status !== "running" ||
-                  current.status === "open" ||
-                  current.status === "closed"
-                }
-                onClick={() =>
-                  act(`/admin/projects/${current.id}/status`, "POST", {
-                    status: "open",
-                  })
-                }
-              >
-                开始评分
-              </Button>
-              <Button
-                icon={LockKeyhole}
-                disabled={
-                  !current.result.complete || current.released === false || current.status === "closed"
-                }
-                onClick={() =>
-                  act(`/admin/projects/${current.id}/status`, "POST", {
-                    status: "closed",
-                  })
-                }
-              >
-                封存成绩
-              </Button>
-              {current.result.complete && current.released === false && <Button kind="primary" onClick={() => act("/admin/reveal", "POST", { projectId: current.id, releaseKey: current.releaseKey })}>公布本队成绩</Button>}
-              <a className="button" href="/admin/projects">
-                重新评分
+      <div className="display-layout">
+        <div className="display-controls">
+          <CompetitionControls data={data} act={act} />
+          <StageControls data={data} act={act} />
+          {!final && (
+            <section className="panel display-control">
+              <h2 className="display-section-title">大屏内容</h2>
+              <Field label="当前展示队伍">
+                <select
+                  value={current?.id || ""}
+                  onChange={(e) =>
+                    act("/admin/presentation", "POST", {
+                      view: "project",
+                      projectId: e.target.value,
+                    })
+                  }
+                >
+                  <option value="" disabled>
+                    请选择队伍
+                  </option>
+                  {data.projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {String(p.position).padStart(2, "0")} · {p.team} · {p.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {current && (
+                <div className="actions">
+                  <Button
+                    disabled={
+                      data.settings.status === "draft" || current.scores.length > 0
+                    }
+                    onClick={() =>
+                      act(`/admin/projects/${current.id}/status`, "POST", {
+                        status: "ready",
+                      })
+                    }
+                  >
+                    准备评分
+                  </Button>
+                  <Button
+                    kind="primary"
+                    icon={Play}
+                    disabled={
+                      data.settings.status !== "running" ||
+                      current.status === "open" ||
+                      current.status === "closed"
+                    }
+                    onClick={() =>
+                      act(`/admin/projects/${current.id}/status`, "POST", {
+                        status: "open",
+                      })
+                    }
+                  >
+                    开始评分
+                  </Button>
+                  <Button
+                    icon={LockKeyhole}
+                    disabled={
+                      !current.result.complete || current.released === false || current.status === "closed"
+                    }
+                    onClick={() =>
+                      act(`/admin/projects/${current.id}/status`, "POST", {
+                        status: "closed",
+                      })
+                    }
+                  >
+                    封存成绩
+                  </Button>
+                  {current.result.complete && current.released === false && <Button kind="primary" onClick={() => act("/admin/reveal", "POST", { projectId: current.id, releaseKey: current.releaseKey })}>公布本队成绩</Button>}
+                  <a className="button" href="/admin/projects">
+                    重新评分
+                  </a>
+                </div>
+              )}
+            </section>
+          )}
+            <section className="panel display-control">
+              <h2 className="display-section-title">排名与颁奖投屏</h2>
+              {!final && <p className="table-sub">发布最终成绩后可切换现场画面。赛前可在排版预览中调整文字。</p>}
+              <div className="result-tabs">
+                {displayViews.map(([id, label]) => (
+                  <Button
+                    key={id}
+                    disabled={!final}
+                    kind={id === view && data.settings.stage.scene === "live" ? "primary" : ""}
+                    onClick={() => act("/admin/presentation", "POST", { view: id })}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+              {final && nextView && (
+                <Button
+                  kind="primary"
+                  icon={ArrowRight}
+                  onClick={() =>
+                    act("/admin/presentation", "POST", {
+                      view: nextView,
+                    })
+                  }
+                >
+                  下一步：{displayViews.find(([id]) => id === nextView)?.[1]}
+                </Button>
+              )}
+            </section>
+          <BackgroundSettings data={data} refresh={refresh} act={act} />
+        </div>
+        <div className="display-preview">
+          <div className="preview-heading">
+            <h2>{editing ? "排版预览" : "当前大屏"}</h2>
+            <div className="preview-tools">
+              <Button aria-pressed={editing} onClick={() => setEditing(!editing)}>{editing ? "返回现场预览" : "排版预览"}</Button>
+              <a href="/screen" target="_blank" rel="noreferrer">
+                只读大屏
               </a>
+              <label>
+                <input type="checkbox" checked={data.settings.showTeamNumber !== false}
+                  onChange={(e) => act("/admin/display-options", "PUT", { showTeamNumber: e.target.checked })} />
+                显示队伍序号
+              </label>
             </div>
-          )}
-        </section>
-      ) : (
-        <section className="panel display-control">
-          <div className="result-tabs">
-            {displayViews.map(([id, label]) => (
-              <Button
-                key={id}
-                kind={id === view ? "primary" : ""}
-                onClick={() => act("/admin/presentation", "POST", { view: id })}
-              >
-                {label}
-              </Button>
-            ))}
           </div>
-          {nextIndex > 0 && nextIndex < displayViews.length && (
-            <Button
-              kind="primary"
-              icon={ArrowRight}
-              onClick={() =>
-                act("/admin/presentation", "POST", {
-                  view: displayViews[nextIndex][0],
-                })
-              }
-            >
-              下一步：{displayViews[nextIndex][1]}
-            </Button>
-          )}
-        </section>
-      )}
-      <h2 className="preview-heading">当前大屏</h2>
-      {data.settings.stage?.scene && data.settings.stage.scene !== "live" ? <div className="stage-preview"><StageCover data={data} /></div> : view === "project" ? (
-        current ? (
-          <ScorePanel project={current} data={data} />
-        ) : (
-          <Empty title="请选择参赛队伍" />
-        )
-      ) : (
-        <ResultsView data={data} view={view} />
-      )}
-    </>
+          {editing ? <LayoutPreview data={data} act={act} ScreenPreview={ScreenPreview} ResultsView={ResultsView} /> : <ScreenPreview />}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1540,9 +1683,8 @@ function ProjectManager({ data, act }) {
                 </label>
               ))}
             </div>
-            <Field label="重评原因">
+            <Field label="重评原因（选填）">
               <input
-                required
                 maxLength={500}
                 value={rejudge.reason}
                 onChange={(e) =>
@@ -1576,6 +1718,28 @@ function JudgeManager({ data, act }) {
       <PageTitle title="评委与专属二维码">
         <a
           className="button"
+          href="/admin/test-qr"
+          target="_blank"
+          rel="noreferrer"
+        >
+          <QrCode size={16} />
+          测试压测二维码
+        </a>
+        <Button
+          icon={Clock3}
+          onClick={() => {
+            if (
+              confirm(
+                `为全部 ${data.judges.length} 位评委的二维码统一续期 7 天？\n二维码本身不变，评委无需重新扫码。`,
+              )
+            )
+              act("/admin/judges/renew-all", "POST", { days: 7 });
+          }}
+        >
+          全部续期
+        </Button>
+        <a
+          className="button"
           href="/admin/print"
           target="_blank"
           rel="noreferrer"
@@ -1589,7 +1753,7 @@ function JudgeManager({ data, act }) {
             icon={Plus}
             onClick={() => {
               setError(null);
-              setEdit({ name: "", title: "", days: 2 });
+              setEdit({ name: "", title: "" });
             }}
           >
             添加评委
@@ -1599,7 +1763,8 @@ function JudgeManager({ data, act }) {
       <div className="notice">
         <ShieldCheck size={18} />
         <span>
-          当前 <b>{data.judges.length}</b> 位评委 · 二维码请分别发放
+          当前 <b>{data.judges.length}</b> 位评委 · 二维码默认有效期 7 天 ·
+          二维码请分别发放
         </span>
       </div>
       <div className="judge-grid">
@@ -1650,6 +1815,23 @@ function JudgeManager({ data, act }) {
                 评分链接
               </Button>
               <Button
+                icon={QrCode}
+                onClick={async () => {
+                  try {
+                    setLink({
+                      id: j.id,
+                      name: j.name,
+                      test: true,
+                      ...(await api(`/admin/judges/${j.id}/link?kind=test`)),
+                    });
+                  } catch (e) {
+                    setError(e);
+                  }
+                }}
+              >
+                测试码
+              </Button>
+              <Button
                 onClick={() =>
                   act(`/admin/judges/${j.id}/access`, "POST", {
                     enabled: !j.enabled,
@@ -1659,16 +1841,32 @@ function JudgeManager({ data, act }) {
                 {j.enabled ? "停用" : "启用"}
               </Button>
               <Button
+                icon={Clock3}
+                onClick={() => {
+                  if (
+                    confirm(
+                      `为${j.name}的二维码续期 7 天？\n二维码不变，评委无需重新扫码。`,
+                    )
+                  )
+                    act(`/admin/judges/${j.id}/access`, "POST", {
+                      renew: true,
+                      days: 7,
+                    });
+                }}
+              >
+                续期
+              </Button>
+              <Button
                 icon={RotateCw}
                 onClick={() => {
                   if (
                     confirm(
-                      `为${j.name}重新生成二维码并续期 48 小时？旧二维码会立即失效。`,
+                      `为${j.name}重新生成二维码并续期 7 天？\n旧二维码会立即失效，已扫码的评委需要重新领取。`,
                     )
                   )
                     act(`/admin/judges/${j.id}/access`, "POST", {
                       rotate: true,
-                      days: 2,
+                      days: 7,
                     });
                 }}
               >
@@ -1679,7 +1877,7 @@ function JudgeManager({ data, act }) {
                   <Button
                     onClick={() => {
                       setError(null);
-                      setEdit({ ...j, days: 2 });
+                      setEdit({ ...j });
                     }}
                   >
                     编辑
@@ -1701,7 +1899,7 @@ function JudgeManager({ data, act }) {
       </div>
       {!data.judges.length && (
         <Empty title="尚未添加评委">
-          添加后生成有效期 48 小时的专属评分二维码。
+          添加后生成有效期 7 天的专属评分二维码，可随时续期且不换码。
         </Empty>
       )}
       <ErrorBox error={!edit && error} />
@@ -1722,7 +1920,6 @@ function JudgeManager({ data, act }) {
                   {
                     name: edit.name,
                     title: edit.title,
-                    days: Number(edit.days),
                   },
                 );
                 setEdit(null);
@@ -1757,23 +1954,57 @@ function JudgeManager({ data, act }) {
         </Modal>
       )}
       {link && (
-        <Modal title={`${link.name}的评分入口`} onClose={() => setLink(null)}>
-          <p>此链接等同于评分凭证，请勿公开分享。</p>
-          <Field label="专属链接">
-            <input
-              readOnly
-              value={link.url}
-              onFocus={(e) => e.target.select()}
-            />
-          </Field>
-          <a
-            className="button primary full-width"
-            href={link.url}
-            target="_blank"
-            rel="noreferrer"
-          >
-            打开评分页面 <ExternalLink size={16} />
-          </a>
+        <Modal
+          title={`${link.name}${link.test ? "的测试二维码" : "的评分入口"}`}
+          onClose={() => setLink(null)}
+        >
+          {link.test ? (
+            <>
+              <p>
+                此码仅在<b>测试评分阶段</b>可用。与本席正式码同时到期，有效期至 {date(link.expires_at)}。
+              </p>
+              <img
+                className="qr-code"
+                style={{ display: "block", margin: "0 auto" }}
+                src={`/api/admin/judges/${link.id}/qr?kind=test`}
+                alt={`${link.name}的测试二维码`}
+              />
+              <Field label="测试链接（压测脚本可用）">
+                <input
+                  readOnly
+                  value={link.url}
+                  onFocus={(e) => e.target.select()}
+                />
+              </Field>
+              <a
+                className="button full-width"
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                打开测试评分页面 <ExternalLink size={16} />
+              </a>
+            </>
+          ) : (
+            <>
+              <p>此链接等同于评分凭证，请勿公开分享。</p>
+              <Field label="专属链接">
+                <input
+                  readOnly
+                  value={link.url}
+                  onFocus={(e) => e.target.select()}
+                />
+              </Field>
+              <a
+                className="button primary full-width"
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                打开评分页面 <ExternalLink size={16} />
+              </a>
+            </>
+          )}
         </Modal>
       )}
     </>
@@ -1880,6 +2111,13 @@ function Rules({ data, act }) {
                 maxLength={100}
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
+              />
+            </Field>
+            <Field label="副标题" hint="显示在背景首页主标题下方，可留空">
+              <input
+                maxLength={500}
+                value={form.subtitle || ""}
+                onChange={(e) => setForm({ ...form, subtitle: e.target.value })}
               />
             </Field>
             <div className="form-grid three">
@@ -2018,17 +2256,122 @@ function TeamRoster({ project, locked, act }) {
   );
 }
 
+function parseCsvTable(text) {
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const rows = [];
+  let row = [],
+    field = "",
+    quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else quoted = false;
+      } else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === "," || c === "\t") {
+      row.push(field);
+      field = "";
+    } else if (c === "\r") {
+      // ignore CR
+    } else if (c === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else field += c;
+  }
+  if (field || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+function awardsFromRows(rows) {
+  const cleaned = rows.map((r) => r.map((c) => String(c ?? "").trim()));
+  let unitIdx = 0,
+    nameIdx = 1,
+    start = 0;
+  const header = cleaned[0] || [];
+  const unitHeader = header.findIndex((c) => /^(?:所属)?单位(?:名称)?$/.test(c));
+  const nameHeader = header.findIndex((c) => /^(?:姓名|获奖人(?:姓名)?)$/.test(c));
+  if (unitHeader >= 0 && nameHeader >= 0) {
+    start = 1;
+    unitIdx = unitHeader;
+    nameIdx = nameHeader;
+  }
+  const awards = [];
+  for (const r of cleaned.slice(start)) {
+    const unit = (r[unitIdx] || "").slice(0, 100);
+    const person = (r[nameIdx] || "").slice(0, 100);
+    if (!unit && !person) continue;
+    awards.push({ name: unit, recipient: person });
+  }
+  return awards;
+}
+
 function Awards({ data, act }) {
   const [prizes, setPrizes] = useState(data.settings.prizes);
-  const [form, setForm] = useState({ name: "", recipient: "", note: "" });
+  const [form, setForm] = useState({ name: "", recipient: "" });
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(null);
+  const [importError, setImportError] = useState(null);
+  const [pasteText, setPasteText] = useState("");
+  const locked = data.settings.status === "final";
+  async function loadFile(file) {
+    setImportError(null);
+    setPending(null);
+    try {
+      let rows;
+      if (/\.(csv|txt)$/i.test(file.name)) rows = parseCsvTable(await file.text());
+      else {
+        const XLSX = await import("xlsx");
+        const book = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        const sheet = book.Sheets[book.SheetNames[0]];
+        if (!sheet) throw new Error("表格中没有工作表");
+        rows = XLSX.utils.sheet_to_json(sheet, {
+          header: 1,
+          raw: false,
+          defval: "",
+        });
+      }
+      const awards = awardsFromRows(rows);
+      if (!awards.length)
+        throw new Error('未解析到有效数据，请确认表格包含"单位"和"姓名"两列');
+      setPending({ awards, source: file.name });
+    } catch (e) {
+      setImportError(e);
+    }
+  }
+  async function importAwards(replace) {
+    if (!pending) return;
+    if (
+      replace &&
+      !confirm(`将删除现有 ${data.awards.length} 条个人奖项并导入 ${pending.awards.length} 条，确认？`)
+    )
+      return;
+    setBusy(true);
+    try {
+      await act("/admin/awards/bulk", "POST", {
+        replace,
+        awards: pending.awards,
+      });
+      setPending(null);
+      setPasteText("");
+    } catch {
+      // The shared action handler already displays the server error.
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <>
       <PageTitle title="奖项设置">
-        <Badge status={data.settings.status === "final" ? "closed" : "draft"}>
-          {data.settings.status === "final"
-            ? "已发布，奖项锁定"
-            : "发布前可调整"}
+        <Badge status={locked ? "closed" : "draft"}>
+          {locked ? "已发布，奖项锁定" : "发布前可调整"}
         </Badge>
       </PageTitle>
       <section className="panel settings-section">
@@ -2058,7 +2401,7 @@ function Awards({ data, act }) {
                   min="0"
                   max="1000"
                   required
-                  disabled={data.settings.status === "final"}
+                  disabled={locked}
                   value={n}
                   onChange={(e) =>
                     setPrizes(
@@ -2071,7 +2414,7 @@ function Awards({ data, act }) {
               </Field>
             ))}
           </div>
-          {data.settings.status !== "final" && (
+          {!locked && (
             <Button disabled={busy} kind="primary">
               保存奖项名额
             </Button>
@@ -2084,7 +2427,7 @@ function Awards({ data, act }) {
           <TeamRoster
             key={p.id}
             project={p}
-            locked={data.settings.status === "final"}
+            locked={locked}
             act={act}
           />
         ))}
@@ -2093,37 +2436,14 @@ function Awards({ data, act }) {
         <h2>个人奖项</h2>
       </div>
       <section className="panel settings-section">
-        {data.awards.map((a) => (
-          <div className="award-edit-row" key={a.id}>
-            <Award size={22} />
-            <div>
-              <strong>
-                {a.name} · {a.recipient}
-              </strong>
-              <p>{a.note}</p>
-            </div>
-            {data.settings.status !== "final" && (
-              <Button
-                kind="danger-text"
-                icon={Trash2}
-                onClick={() => {
-                  if (confirm("删除此个人奖项？"))
-                    act(`/admin/awards/${a.id}`, "DELETE", {});
-                }}
-              >
-                删除
-              </Button>
-            )}
-          </div>
-        ))}
-        {data.settings.status !== "final" && (
+        {!locked && (
           <form
             onSubmit={async (e) => {
               e.preventDefault();
               setBusy(true);
               try {
                 await act("/admin/awards", "POST", form);
-                setForm({ name: "", recipient: "", note: "" });
+                setForm({ name: "", recipient: "" });
               } catch {
               } finally {
                 setBusy(false);
@@ -2131,16 +2451,16 @@ function Awards({ data, act }) {
             }}
           >
             <div className="form-grid">
-              <Field label="奖项名称">
+              <Field label="单位">
                 <input
                   required
                   maxLength={100}
-                  placeholder="如：最佳协作奖"
+                  placeholder="如：第一分公司"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
               </Field>
-              <Field label="获奖人">
+              <Field label="姓名">
                 <input
                   required
                   maxLength={100}
@@ -2151,18 +2471,131 @@ function Awards({ data, act }) {
                 />
               </Field>
             </div>
-            <Field label="颁奖说明">
-              <input
-                maxLength={500}
-                value={form.note}
-                onChange={(e) => setForm({ ...form, note: e.target.value })}
-              />
-            </Field>
             <Button kind="primary" icon={Plus} disabled={busy}>
               添加个人奖项
             </Button>
           </form>
         )}
+        {!locked && (
+          <div className="award-import">
+            <h3>批量导入</h3>
+            <p className="table-sub">
+              支持 Excel（.xlsx / .xls）或 CSV 表格，仅需两列：单位、姓名。
+            </p>
+            <div className="actions">
+              <label className="button">
+                <Upload size={16} />
+                选择表格文件
+                <input
+                  type="file"
+                  accept=".csv,.txt,.xlsx,.xls"
+                  hidden
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) loadFile(file);
+                  }}
+                />
+              </label>
+              <details className="inline-help">
+                <summary>或粘贴表格文本</summary>
+                <textarea
+                  placeholder="单位，姓名（可用逗号、制表符或直接从 Excel 复制粘贴）"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                />
+                <Button
+                  type="button"
+                  disabled={!pasteText.trim()}
+                  onClick={() => {
+                    setImportError(null);
+                    const awards = awardsFromRows(parseCsvTable(pasteText));
+                    if (!awards.length)
+                      return setImportError(
+                        new Error('未解析到有效数据，请确认每行包含"单位"和"姓名"'),
+                      );
+                    setPending({ awards, source: "粘贴文本" });
+                  }}
+                >
+                  解析文本
+                </Button>
+              </details>
+            </div>
+            <ErrorBox error={importError} />
+            {pending && (
+              <div className="award-import-preview">
+                <p>
+                  已解析 <strong>{pending.awards.length}</strong> 条（来源：
+                  {pending.source}）：
+                </p>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>单位</th>
+                        <th>姓名</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pending.awards.slice(0, 8).map((a, i) => (
+                        <tr key={i}>
+                          <td>{a.name}</td>
+                          <td>{a.recipient}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {pending.awards.length > 8 && (
+                  <p className="table-sub">
+                    …以及另外 {pending.awards.length - 8} 条
+                  </p>
+                )}
+                <div className="actions">
+                  <Button
+                    kind="primary"
+                    icon={Plus}
+                    disabled={busy}
+                    onClick={() => importAwards(false)}
+                  >
+                    追加导入
+                  </Button>
+                  <Button disabled={busy} onClick={() => importAwards(true)}>
+                    替换现有名单
+                  </Button>
+                  <Button
+                    kind="danger-text"
+                    disabled={busy}
+                    onClick={() => setPending(null)}
+                  >
+                    取消
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {data.awards.map((a) => (
+          <div className="award-edit-row" key={a.id}>
+            <Award size={22} />
+            <div>
+              <strong>{a.recipient}</strong>
+              <p>{a.name}</p>
+            </div>
+            {!locked && (
+              <Button
+                kind="danger-text"
+                icon={Trash2}
+                onClick={() => {
+                  if (confirm(`删除"${a.recipient}"的个人奖项？`))
+                    act(`/admin/awards/${a.id}`, "DELETE", {});
+                }}
+              >
+                删除
+              </Button>
+            )}
+          </div>
+        ))}
       </section>
     </>
   );
@@ -2217,30 +2650,49 @@ function Logs({ data }) {
 }
 
 function PrintJudges({ data }) {
+  const [single, setSingle] = useState(false);
   return (
     <div className="print-page">
       <div className="print-toolbar">
         <h1>评委评分席位卡</h1>
-        <Button kind="primary" icon={Printer} onClick={() => print()}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button
+            kind={single ? "" : "primary"}
+            aria-pressed={!single}
+            onClick={() => setSingle(false)}
+          >
+            多码一页
+          </Button>
+          <Button
+            kind={single ? "primary" : ""}
+            aria-pressed={single}
+            onClick={() => setSingle(true)}
+          >
+            单页单码
+          </Button>
+        </div>
+        <Button icon={Printer} onClick={() => print()}>
           打印全部二维码
         </Button>
         <a href="/admin/judges">返回评委管理</a>
       </div>
       <p className="no-print">
         每张二维码对应一位评委，请分别发放。纸张选 A4，关闭浏览器页眉页脚。
+        {single
+          ? "当前为单页单码：一位评委一张 A4，便于逐个发放。"
+          : "当前为多码一页：一页两张席位卡。"}
       </p>
-      <div className="print-grid">
+      <div className={single ? "print-grid single" : "print-grid"}>
         {data.judges.map((j, i) => (
           <section className="print-ticket" key={j.id}>
             <p>{data.settings.title}</p>
-            <span>评委席 {String(i + 1).padStart(2, "0")}</span>
-            <h2>评委 {String(i + 1).padStart(2, "0")}</h2>
+            <h2>评委席 {String(i + 1).padStart(2, "0")}</h2>
 
             <img
               src={`/api/admin/judges/${j.id}/qr?v=${j.token_version}`}
               alt={`评委 ${i + 1} 评分二维码`}
             />
-            <h3>扫码评分 · 专属入口</h3>
+            <h3>扫码评分</h3>
             <small>
               有效期至 {new Date(j.expires_at).toLocaleString("zh-CN")} ·{" "}
               {j.enabled ? "已启用" : "已停用"}
@@ -2249,6 +2701,122 @@ function PrintJudges({ data }) {
           </section>
         ))}
       </div>
+    </div>
+  );
+}
+
+function competitionPhase(settings) {
+  if (settings.mode === "test") return "测试评分";
+  return settings.rounds > 1
+    ? `正式比赛 · 第 ${settings.currentRound} / ${settings.rounds} 轮`
+    : "正式比赛";
+}
+
+function TestJudges({ data }) {
+  const [links, setLinks] = useState(null);
+  const [error, setError] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [single, setSingle] = useState(false);
+  const seats = JSON.stringify(data.judges.map(j => [j.id, j.token_version, j.expires_at, j.name]));
+  useEffect(() => {
+    let active = true;
+    setError(null);
+    setLinks(null);
+    api("/admin/judges/test-links")
+      .then(value => { if (active) setLinks(value); })
+      .catch(reason => { if (active) setError(reason); });
+    return () => { active = false; };
+  }, [seats]);
+  const text = links?.judges
+    ?.map((j) => `${j.number}\t${j.name}\t${j.url}`)
+    .join("\n");
+  return (
+    <div className="print-page">
+      <div className="print-toolbar">
+        <h1>测试压测二维码</h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Button
+            kind={single ? "" : "primary"}
+            aria-pressed={!single}
+            onClick={() => setSingle(false)}
+          >
+            多码一页
+          </Button>
+          <Button
+            kind={single ? "primary" : ""}
+            aria-pressed={single}
+            onClick={() => setSingle(true)}
+          >
+            单页单码
+          </Button>
+        </div>
+        {links?.judges?.length ? (
+          <Button icon={Printer} onClick={() => print()}>
+            打印全部
+          </Button>
+        ) : null}
+        <a href="/admin/judges">返回评委管理</a>
+      </div>
+      <p className="no-print">
+        测试码与同席正式码共用到期时间，续期、停用和换码同步生效。测试码仅限测试阶段，正式评分请使用正式码。
+      </p>
+      {error && <ErrorBox error={error} />}
+      {!links && !error && <p className="no-print">正在获取测试二维码…</p>}
+      {links && !links.judges.length && (
+        <Empty title="尚未添加评委">
+          先在评委管理中添加评委，再生成测试二维码。
+        </Empty>
+      )}
+      {links?.judges?.length ? (
+        <>
+          <div className={single ? "print-grid single" : "print-grid"}>
+            {links.judges.map((j) => (
+              <section className="print-ticket" key={j.id}>
+                <p>{data?.settings?.title}</p>
+                <h2>测试席 {String(j.number).padStart(2, "0")}</h2>
+                <img
+                  src={`/api/admin/judges/${j.id}/qr?kind=test&v=${j.token_version}`}
+                  alt={`评委 ${j.number} 测试二维码`}
+                />
+                <h3>测试评分专用</h3>
+                <small>{j.name} · 正式评分请使用正式二维码</small>
+                <p className="ticket-note">仅测试阶段可用 · 到期 {date(j.expires_at)}</p>
+              </section>
+            ))}
+          </div>
+          <div className="no-print">
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <Button
+                icon={copied ? Check : QrCode}
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(text);
+                  } catch {
+                    const el = document.getElementById("test-links-text");
+                    el?.select();
+                    document.execCommand?.("copy");
+                  }
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+              >
+                {copied ? "已复制" : "复制全部测试链接"}
+              </Button>
+              <span className="muted">
+                每行：序号 + 评委名 + 测试链接，可直接粘贴到压测脚本。
+              </span>
+            </div>
+            <textarea
+              id="test-links-text"
+              readOnly
+              rows={Math.min(links.judges.length, 10)}
+              value={text}
+              onFocus={(e) => e.target.select()}
+              style={{ width: "100%", marginTop: 12 }}
+            />
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -2262,6 +2830,11 @@ function JudgeApp() {
   const current = data?.projects.find((p) =>
     ["open", "ready"].includes(p.status),
   );
+  const nextTeam = data?.settings.mode === "test" ? data.projects[0]
+    : data?.projects.find((team) => team.status === "pending")
+      ?? (data?.settings.currentRound < data?.settings.rounds ? data.projects[0] : null);
+  const validScore = /^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(score) && Number(score) <= 100;
+  const invalidScore = score !== "" && !validScore;
   const key =
     data && current
       ? `jh-single-${data.judge.id}-${data.settings.mode}-${data.settings.currentRound}-${data.settings.epoch}-${current.id}-${current.revision}`
@@ -2276,6 +2849,7 @@ function JudgeApp() {
   }, [key]);
   async function submit(e) {
     e.preventDefault();
+    if (!validScore || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -2300,26 +2874,18 @@ function JudgeApp() {
   return (
     <div className="judge-app">
       <header className="judge-top">
-        <span className="brand">
-          <span className="brand-mark">
-            <Activity size={22} />
-          </span>
-          评委评分席
-        </span>
+        <h1>{data ? "评委 " + String(data.judge.number).padStart(2, "0") : "评委评分席"}</h1>
         <Connection connected={live.connected} />
       </header>
       <main>
         {!data ? (
-          <ErrorBox error={live.error} />
+          live.error ? <ErrorBox error={live.error} /> : <p role="status">正在连接赛事…</p>
         ) : (
           <>
             <div className="judge-welcome">
               <Badge status={data.settings.status}>
-                {data.settings.mode === "test"
-                  ? "测试评分"
-                  : `正式比赛 · 第 ${data.settings.currentRound} / ${data.settings.rounds} 轮`}
+                {competitionPhase(data.settings)}
               </Badge>
-              <h1>评委 {String(data.judge.number).padStart(2, "0")}</h1>
               <p>{data.settings.title}</p>
             </div>
             {current ? (
@@ -2331,7 +2897,7 @@ function JudgeApp() {
                   <Badge status={current.status} />
                 </div>
                 <h2>{current.team}</h2>
-                <p>{current.name}</p>
+                {current.name !== current.team && <p>{current.name}</p>}
                 {current.ownScore ? (
                   <div className="submitted-summary">
                     <CheckCircle2 size={36} />
@@ -2340,6 +2906,9 @@ function JudgeApp() {
                       {fmt(current.ownScore.total / 100)}
                       <small>分</small>
                     </strong>
+                    <p>提交时间 <time dateTime={current.ownScore.submitted_at}>{time(current.ownScore.submitted_at)}</time></p>
+                    <p>已锁定，如需修改请联系管理员</p>
+                    {nextTeam && <p className="judge-next">下一队：{nextTeam.team}</p>}
                   </div>
                 ) : (
                   <form onSubmit={submit}>
@@ -2356,13 +2925,12 @@ function JudgeApp() {
                       <Field label="总分（满分 100 分）">
                         <input
                           className="score-input"
-                          type="number"
+                          type="text"
                           inputMode="decimal"
                           required
-                          min="0"
-                          max="100"
-                          step="0.01"
-                          placeholder="0 – 100"
+                          autoComplete="off"
+                          aria-invalid={invalidScore}
+                          aria-describedby={invalidScore ? "score-range score-error" : "score-range"}
                           value={score}
                           onChange={(e) => {
                             setScore(e.target.value);
@@ -2372,13 +2940,13 @@ function JudgeApp() {
                           }}
                         />
                       </Field>
-                      <Button
-                        kind="primary full-width"
-                        disabled={busy || score === ""}
-                        icon={Check}
-                      >
-                        {busy ? "正在提交…" : "提交评分"}
-                      </Button>
+                      <p id="score-range">0–100 分，最多两位小数</p>
+                      {invalidScore && <p id="score-error" role="alert">请输入 0 到 100 之间的数字，最多保留两位小数。</p>}
+                      <div className="judge-submit">
+                        <Button kind="primary full-width" disabled={busy || !validScore} icon={Check}>
+                          {busy ? "正在提交…" : "提交评分"}
+                        </Button>
+                      </div>
                     </fieldset>
                     <ErrorBox error={error} />
                   </form>
@@ -2401,7 +2969,7 @@ function JudgeApp() {
   );
 }
 
-function PresenterControls({ data, current, revealed, page, pages, refresh }) {
+function PresenterControls({ data, current, revealed, page, refresh }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [modal, setModal] = useState(null);
@@ -2459,7 +3027,7 @@ function PresenterControls({ data, current, revealed, page, pages, refresh }) {
     if (busy || data.settings.status === "final" || current?.status !== "open")
       return;
     setSelected([]);
-    setReason("现场重评");
+    setReason("");
     setError(null);
     setModal("rejudge");
   }
@@ -2527,11 +3095,6 @@ function PresenterControls({ data, current, revealed, page, pages, refresh }) {
       <span className="sr-only" role="status">
         {busy ? "正在切换…" : waitingReveal ? "正在亮分…" : next.label}
       </span>
-      {pages > 1 && (
-        <span className="presenter-page screen-pagination">
-          {page + 1} / {pages}
-        </span>
-      )}
       {!modal && error && (
         <div className="presenter-error">
           <ErrorBox error={error} />
@@ -2648,9 +3211,9 @@ function PresenterControls({ data, current, revealed, page, pages, refresh }) {
                 </Field>
               </>
             )}
-            <Field label={modal === "rejudge" ? "重评原因" : "裁定依据"}>
+            <Field label={modal === "rejudge" ? "重评原因（选填）" : "裁定依据"}>
               <input
-                required
+                required={modal !== "rejudge"}
                 maxLength={100}
                 disabled={busy}
                 value={reason}
@@ -2685,18 +3248,16 @@ function Screen({ data, connected, presenter = false, refresh }) {
   const [localPage, setPage] = useState(0);
   const [reveal, setReveal] = useState(null);
   const manual = presenter || data.settings.presentation.manual;
-  const page = manual ? data.settings.presentation.page || 0 : localPage;
-  // Only paginate within the operator-selected stage; never switch award stages on a timer.
-  const pageSize = view === "teamAwards" ? 3 : 8;
-  const count =
-    view === "ranking"
-      ? data.ranking.length
-      : view === "individualAwards"
-        ? data.awards.length
-        : view === "teamAwards"
-          ? data.ranking.filter((p) => p.prize).length
-          : 0;
-  const pages = Math.max(1, Math.ceil(count / pageSize));
+  const slides = resultPages(data, view);
+  const pages = Math.max(1, slides.length);
+  const page = Math.min(manual ? data.settings.presentation.page || 0 : localPage, pages - 1);
+  const records = slides[page] || [];
+  const covered = data.settings.stage?.scene && data.settings.stage.scene !== "live";
+  const board = covered ? (data.settings.stage.scene === "home" ? "home" : null)
+    : view !== "project" ? view : null;
+  const startedAt = data.settings.presentation.startedAt;
+  // Legacy saved views have no start time and rotate from the moment they open.
+  const elapsed = startedAt ? Math.max(0, Date.parse(data.serverTime) - startedAt) : 0;
   useEffect(() => {
     const handler = (e) => {
       if (
@@ -2722,39 +3283,33 @@ function Screen({ data, connected, presenter = false, refresh }) {
   }, [view]);
   useEffect(() => {
     if (manual || pages <= 1) return;
-    const timer = setInterval(() => setPage((n) => (n + 1) % pages), 12000);
-    return () => clearInterval(timer);
-  }, [pages, view, manual]);
-  const shown = {
-    ...data,
-    ranking:
-      view === "teamAwards"
-        ? data.ranking
-            .filter((p) => p.prize)
-            .slice((page % pages) * pageSize, ((page % pages) + 1) * pageSize)
-        : data.ranking.slice(
-            (page % pages) * pageSize,
-            ((page % pages) + 1) * pageSize,
-          ),
-    awards: data.awards.slice(
-      (page % pages) * pageSize,
-      ((page % pages) + 1) * pageSize,
-    ),
-  };
+    // The preview and independently opened screens follow the same stage clock.
+    const advance = Math.floor(elapsed / 12000);
+    setPage(advance % pages);
+    let interval;
+    const timer = setTimeout(() => {
+      const next = () => setPage((n) => (n + 1) % pages);
+      next();
+      interval = setInterval(next, 12000);
+    }, 12000 - elapsed % 12000);
+    return () => { clearTimeout(timer); clearInterval(interval); };
+  }, [pages, view, manual, elapsed]);
   return (
     <div
-      className={`screen-page stage-view stage-${view} ${presenter ? "presenter-screen" : ""}`}
+      className={`${board ? "projection-screen" : "screen-page stage-view"} stage-${view} stage-scene-${data.settings.stage?.scene || "live"} ${presenter ? "presenter-screen" : ""}`}
     >
+      {board ? <>
+        <ProjectionBoard data={data} view={board} records={records} page={page} pages={pages} ResultsView={ResultsView} />
+        {!connected && <div className="projection-connection"><Connection connected={false} /></div>}
+      </> : <>
       <header>
-        <span className="screen-event">
-          <Activity size={24} aria-hidden="true" />
-          {data.settings.title}
-        </span>
+        <div className="screen-event">{data.settings.title}</div>
         <div className="screen-tools">
+          {!covered && view === "project" && data.settings.mode === "test" && <span>测试评分</span>}
           {!connected && <Connection connected={false} />}
         </div>
       </header>
-      {data.settings.stage?.scene && data.settings.stage.scene !== "live" ? <StageCover data={data} /> : view === "project" ? (
+      {covered ? <StageCover data={data} /> : (
         current ? (
           <ScorePanel
             project={current}
@@ -2766,20 +3321,14 @@ function Screen({ data, connected, presenter = false, refresh }) {
             <h1>比赛即将开始</h1>
           </div>
         )
-      ) : (
-        <div className="stage-results" key={view}>
-          <h1 className="stage-heading">
-            {displayViews.find(([id]) => id === view)?.[1]}
-          </h1>
-          <ResultsView data={shown} view={view} />
-        </div>
       )}
+      <footer className="screen-pagination" />
+      </>}
       {presenter && (
         <PresenterControls
           data={data}
           current={current}
           page={page}
-          pages={pages}
           refresh={refresh}
           revealed={
             !!current &&
@@ -2787,13 +3336,6 @@ function Screen({ data, connected, presenter = false, refresh }) {
             reveal.ready
           }
         />
-      )}
-      {!presenter && pages > 1 && (
-        <div className="screen-pagination">
-          <span>
-            {(page % pages) + 1} / {pages}
-          </span>
-        </div>
       )}
     </div>
   );
@@ -2868,11 +3410,12 @@ function App() {
   if (["/screen", "/", "/ranking"].includes(path))
     return <Screen data={data} connected={live.connected} />;
   if (path === "/admin/print") return <PrintJudges data={data} />;
+  if (path === "/admin/test-qr") return <TestJudges data={data} />;
   let content;
   if (path === "/admin/ranking")
     content = <Ranking data={data} act={safeAct} />;
   else if (path === "/admin/display")
-    content = <PresentationControls data={data} act={safeAct} />;
+    content = <PresentationControls data={data} act={safeAct} refresh={live.refresh} />;
   else if (path === "/admin/projects")
     content = <ProjectManager data={data} act={safeAct} />;
   else if (path === "/admin/judges")
@@ -2914,6 +3457,8 @@ function App() {
   );
 }
 
+// 渲染前套用已保存的配色主题；服务端 CSP 禁止内联脚本，因此放在模块入口。
+applyTheme(readTheme());
 createRoot(document.getElementById("root")).render(
   location.pathname === "/judge" ? <JudgeApp /> : <App />,
 );

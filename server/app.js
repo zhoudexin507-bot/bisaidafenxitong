@@ -21,6 +21,8 @@ import {
 } from "./db.js";
 import { calculate, rankProjects, csvCell } from "./scoring.js";
 import { nextSlide, pageCount } from "./presentation.js";
+import { resultViews } from "../shared/slides.js";
+import { displayLayouts } from "../shared/display-layout.js";
 import { defaultStage, changeStage, isScoreReleased, scoreReleaseKey } from "./stage.js";
 
 const name = z.string().trim().min(1).max(100);
@@ -38,7 +40,7 @@ const judgeSchema = z.object({
 });
 const settingsSchema = z.object({
   title: name,
-  subtitle: text,
+  subtitle: z.string().trim().max(500).default(""),
   trimEnabled: z.boolean(),
   trimSymmetric: z.boolean(),
   trimHigh: z.number().int().min(0).max(99),
@@ -49,6 +51,9 @@ const settingsSchema = z.object({
   prizes: z.array(z.number().int().min(0).max(200)).length(3),
 });
 const hash = (value) => createHash("sha256").update(value).digest("hex");
+// 评委二维码默认有效期：比赛当天领码 + 前后筹备余量，7 天远超单场赛事时长。
+const DEFAULT_QR_DAYS = 7;
+const qrExpiry = (days = DEFAULT_QR_DAYS) => Date.now() + days * 86400000;
 function fail(status, message) {
   const error = new Error(message);
   error.status = status;
@@ -100,7 +105,18 @@ export function createApp(config) {
       referrerPolicy: { policy: "no-referrer" },
     }),
   );
-  app.use(express.json({ limit: "32kb" }));
+  app.use(express.json({ limit: "256kb" }));
+  // Backgrounds are public, immutable per version and served with caching so
+  // the projector does not re-download megabytes on every SSE refresh.
+  app.get("/api/backgrounds/:kind", (req, res) => {
+    const row = db
+      .prepare("SELECT mime,data,version FROM backgrounds WHERE kind=?")
+      .get(req.params.kind);
+    if (!row) return res.status(404).json({ error: "背景图未设置" });
+    res.set("Cache-Control", req.query.v === String(row.version)
+      ? "public, max-age=86400, immutable" : "no-cache");
+    res.type(row.mime).send(row.data);
+  });
   app.use("/api", (req, res, next) => {
     res.set("Cache-Control", "no-store");
     if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method)) {
@@ -119,7 +135,7 @@ export function createApp(config) {
         return res
           .status(403)
           .json({ error: "请求来源不可信，请从系统页面操作" });
-      if (!req.is("application/json"))
+      if (!req.is("application/json") && !req.is("image/*"))
         return res.status(415).json({ error: "请使用 JSON 请求" });
     }
     next();
@@ -156,21 +172,31 @@ export function createApp(config) {
       return res.status(401).json({ error: "请先登录管理员账号" });
     next();
   }
-  function tokenFor(judge) {
-    const payload = `${judge.id}.${judge.token_version}`;
+  function tokenFor(judge, kind = "official") {
+    const payload =
+      kind === "test"
+        ? `${judge.id}.${judge.token_version}.test`
+        : `${judge.id}.${judge.token_version}`;
     return `${payload}.${createHmac("sha256", config.tokenSecret).update(payload).digest("base64url")}`;
   }
   function judgeAuth(req, res, next) {
     const token = (req.headers.authorization || "").replace(/^Bearer /, "");
     if (token.length > 200)
       return res.status(401).json({ error: "评分凭证无效" });
+    const parts = token.split(".");
+    const kind = parts.length === 4 && parts[2] === "test" ? "test" : "official";
     const judge = db
       .prepare("SELECT * FROM judges WHERE id=?")
-      .get(token.split(".")[0]);
-    if (!judge || !equal(tokenFor(judge), token))
+      .get(parts[0]);
+    if (!judge || !equal(tokenFor(judge, kind), token))
       return res
         .status(401)
         .json({ error: "评分链接已失效，请联系管理员重新领取二维码" });
+    if (kind === "test" && getSettings(db).mode !== "test")
+      return res.status(403).json({
+        error:
+          "测试二维码仅在测试评分阶段可用，正式评分请使用评委专属二维码",
+      });
     if (!judge.enabled || judge.expires_at <= Date.now())
       return res
         .status(403)
@@ -273,6 +299,12 @@ export function createApp(config) {
         judgeCount: judges.length,
         projectCount: projects.length,
       },
+      backgrounds: Object.fromEntries(
+        db
+          .prepare("SELECT kind,version FROM backgrounds")
+          .all()
+          .map((row) => [row.kind, row.version]),
+      ),
       judges,
       projects,
       ranking: rankProjects(
@@ -319,6 +351,7 @@ export function createApp(config) {
       data.projects.find((p) => ["ready", "open"].includes(p.status)) ||
       data.projects[0];
     data.judges = data.judges.map(({ id, number }) => ({ id, number }));
+    data.currentTeamNumber = chosen ? data.projects.indexOf(chosen) + 1 : null;
     data.projects = chosen
       ? [chosen].map(({ roundResults, overall, tie_order, releaseKey, ...p }) =>
           p.result.complete && p.released
@@ -521,7 +554,7 @@ export function createApp(config) {
       s = data.settings;
     if (key !== currentKey) fail(409, "演示状态已更新，请按当前页面继续");
     if (s.status !== "final") fail(409, "评分阶段不能倒退");
-    const views = ["ranking", "teamAwards", "individualAwards"];
+    const views = resultViews(data);
     let view = s.presentation.view,
       page = s.presentation.page || 0;
     if (page > 0) page--;
@@ -534,7 +567,7 @@ export function createApp(config) {
     changed("管理员", "演示上一页", { view, page }, () =>
       saveSettings(db, {
         ...s,
-        presentation: { view, projectId: null, page, manual: true },
+        presentation: { view, projectId: null, page, manual: true, reviewing: true },
       }),
     );
     res.json({ ok: true });
@@ -612,6 +645,80 @@ export function createApp(config) {
         .all(),
     }),
   );
+  app.put("/api/admin/display-options", admin, (req, res) => {
+    const options = z.object({ showTeamNumber: z.boolean(), showHomeTitle: z.boolean() })
+      .partial().strict().refine(v => Object.keys(v).length > 0).parse(req.body);
+    changed("管理员", "设置大屏文字显示", options, () =>
+      saveSettings(db, { ...getSettings(db), ...options }));
+    res.json({ ok: true });
+  });
+  app.put("/api/admin/display-layout/:view/:layer", admin, (req, res) => {
+    const { view, layer } = req.params;
+    if (!Object.hasOwn(displayLayouts, view) || !Object.hasOwn(displayLayouts[view], layer))
+      fail(404, "画面或文字项不存在");
+    const style = z.object({
+      size: z.number().int().min(12).max(160),
+      x: z.number().int().min(1).max(99),
+      y: z.number().int().min(1).max(99),
+      color: z.string().regex(/^#[0-9a-f]{6}$/i),
+    }).strict().parse(req.body);
+    changed("管理员", "保存大屏文字排版", { view, layer, ...style }, () => {
+      const settings = getSettings(db);
+      const layouts = settings.displayLayouts || {};
+      saveSettings(db, { ...settings, displayLayouts: {
+        ...layouts, [view]: { ...layouts[view], [layer]: style },
+      } });
+    });
+    res.json({ ok: true });
+  });
+  const backgroundKinds = new Set(["home", "awards"]);
+  const imageMimes = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+  function sniffImage(buffer) {
+    const text = (start, end) => buffer.subarray(start, end).toString("latin1");
+    if (buffer.length >= 8 && buffer[0] === 0x89 && text(1, 4) === "PNG")
+      return "image/png";
+    if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff)
+      return "image/jpeg";
+    if (buffer.length >= 12 && text(0, 4) === "RIFF" && text(8, 12) === "WEBP")
+      return "image/webp";
+    if (buffer.length >= 6 && text(0, 3) === "GIF") return "image/gif";
+    return null;
+  }
+  app.put(
+    "/api/admin/backgrounds/:kind",
+    admin,
+    express.raw({ type: imageMimes, limit: "10mb" }),
+    (req, res) => {
+      if (!backgroundKinds.has(req.params.kind))
+        fail(404, "背景图类型不存在");
+      const image = req.body;
+      if (!Buffer.isBuffer(image) || !image.length)
+        fail(400, "请选择 PNG、JPG、WebP 或 GIF 图片");
+      const mime = sniffImage(image);
+      if (!mime) fail(400, "图片内容无法识别，请使用 PNG、JPG、WebP 或 GIF");
+      changed(
+        "管理员",
+        "设置背景图",
+        { kind: req.params.kind, size: image.length, mime },
+        () =>
+          db
+            .prepare(
+              `INSERT INTO backgrounds VALUES (?,?,?,?,?)
+               ON CONFLICT(kind) DO UPDATE SET mime=excluded.mime, data=excluded.data, version=excluded.version, updated_at=excluded.updated_at`,
+            )
+            .run(req.params.kind, mime, image, Date.now(), new Date().toISOString()),
+      );
+      res.json({ ok: true });
+    },
+  );
+  app.delete("/api/admin/backgrounds/:kind", admin, (req, res) => {
+    if (!backgroundKinds.has(req.params.kind)) fail(404, "背景图类型不存在");
+    if (db.prepare("SELECT 1 FROM backgrounds WHERE kind=?").get(req.params.kind))
+      changed("管理员", "清除背景图", { kind: req.params.kind }, () =>
+        db.prepare("DELETE FROM backgrounds WHERE kind=?").run(req.params.kind),
+      );
+    res.json({ ok: true });
+  });
   app.put("/api/admin/reveal-mode", admin, (req, res) => {
     const { mode } = z.object({ mode: z.enum(["auto", "manual"]) }).parse(req.body);
     draftOnly();
@@ -632,7 +739,7 @@ export function createApp(config) {
   });
   app.post("/api/admin/stage", admin, (req, res) => {
     const command = z.discriminatedUnion("action", [
-      z.object({ action: z.literal("scene"), scene: z.enum(["live", "standby", "break"]), message: z.string().trim().max(100).default(""), seconds: z.number().int().min(0).max(7200).default(0), version: z.number().int() }),
+      z.object({ action: z.literal("scene"), scene: z.enum(["live", "home", "standby", "break"]), message: z.string().trim().max(100).default(""), seconds: z.number().int().min(0).max(7200).default(0), version: z.number().int() }),
       ...["start", "pause"].map((action) => z.object({ action: z.literal(action), version: z.number().int() })),
       z.object({ action: z.literal("reset"), seconds: z.number().int().min(0).max(7200), version: z.number().int() }),
     ]).parse(req.body);
@@ -674,7 +781,7 @@ export function createApp(config) {
           if (table === "judges")
             db.prepare(
               "INSERT INTO judges(id,name,expires_at) VALUES (?,?,?)",
-            ).run(randomUUID(), `评委 ${label}`, Date.now() + 48 * 3600000);
+            ).run(randomUUID(), `评委 ${label}`, qrExpiry());
           else {
             let position = i + 1;
             while (
@@ -731,6 +838,8 @@ export function createApp(config) {
     const id = randomUUID();
     changed("管理员", "归档并新建比赛", { archiveId: id }, () => {
       const payload = { version: 1, settings, results: snapshot() };
+      payload.backgrounds = db.prepare("SELECT * FROM backgrounds").all()
+        .map(({ data, ...metadata }) => ({ ...metadata, dataBase64: Buffer.from(data).toString("base64") }));
       for (const table of [
         "projects",
         "judges",
@@ -753,7 +862,7 @@ export function createApp(config) {
       );
       db.prepare(
         "UPDATE judges SET token_version=token_version+1, enabled=1, expires_at=?",
-      ).run(Date.now() + 48 * 3600000);
+      ).run(qrExpiry());
       saveSettings(db, {
         ...settings,
         status: "draft",
@@ -791,11 +900,8 @@ export function createApp(config) {
   });
   app.post("/api/admin/test/finish", admin, (req, res) => {
     const s = getSettings(db);
-    if (
-      s.mode !== "test" ||
-      !snapshot().projects.some((p) => p.result.complete)
-    )
-      fail(409, "请先让全部评委完成至少一个测试项目");
+    if (s.mode !== "test" || s.status !== "running")
+      fail(409, "当前不在测试评分阶段");
     changed("管理员", "完成测试评分", {}, () => {
       db.exec("UPDATE projects SET status='pending'");
       saveSettings(db, {
@@ -922,24 +1028,63 @@ export function createApp(config) {
       findProject(presentation.projectId);
     } else presentation.projectId = null;
     changed("管理员", "切换大屏", presentation, () =>
-      saveSettings(db, { ...settings, presentation }),
+      saveSettings(db, { ...settings,
+        stage: presentation.view !== "project" && settings.stage.scene !== "live"
+          ? changeStage(settings, { action: "scene", scene: "live" }).stage : settings.stage,
+        presentation: { ...presentation, startedAt: Date.now() } }),
     );
     res.json({ ok: true });
   });
   app.post("/api/admin/judges", admin, (req, res) => {
     draftOnly();
-    const j = judgeSchema.parse(req.body);
+    const j = judgeSchema
+      .extend({
+        days: z.number().int().min(1).max(30).default(DEFAULT_QR_DAYS),
+      })
+      .parse(req.body);
     if (db.prepare("SELECT COUNT(*) AS n FROM judges").get().n >= 100)
       fail(400, "单场最多支持 100 位评委");
     const id = randomUUID();
-    changed("管理员", "新增评委", { name: j.name }, () =>
+    changed("管理员", "新增评委", { name: j.name, days: j.days }, () =>
       db
         .prepare(
           "INSERT INTO judges(id,name,title,expires_at) VALUES (?,?,?,?)",
         )
-        .run(id, j.name, j.title, Date.now() + 48 * 3600000),
+        .run(id, j.name, j.title, qrExpiry(j.days)),
     );
     res.status(201).json({ id });
+  });
+  // 以下两个批量端点必须先于 /judges/:id 注册，避免 "renew-all"/"test-links" 被当成评委 id。
+  app.post("/api/admin/judges/renew-all", admin, (req, res) => {
+    const { days } = z
+      .object({ days: z.number().int().min(1).max(30).default(DEFAULT_QR_DAYS) })
+      .parse(req.body || {});
+    const rows = db.prepare("SELECT id FROM judges").all();
+    changed(
+      "管理员",
+      "批量续期评委二维码",
+      { days, count: rows.length },
+      () =>
+        db
+          .prepare("UPDATE judges SET expires_at=MAX(expires_at,?)")
+          .run(qrExpiry(days)),
+    );
+    res.json({ ok: true, count: rows.length });
+  });
+  app.get("/api/admin/judges/test-links", admin, (_req, res) => {
+    const judges = db
+      .prepare("SELECT id,name,token_version,expires_at FROM judges ORDER BY rowid")
+      .all();
+    res.json({
+      judges: judges.map((j, i) => ({
+        id: j.id,
+        number: i + 1,
+        name: j.name,
+        expires_at: j.expires_at,
+        token_version: j.token_version,
+        url: `${publicUrl.origin}/judge#${tokenFor(j, "test")}`,
+      })),
+    });
   });
   app.put("/api/admin/judges/:id", admin, (req, res) => {
     draftOnly();
@@ -965,34 +1110,53 @@ export function createApp(config) {
       .object({
         enabled: z.boolean().optional(),
         rotate: z.boolean().optional(),
+        renew: z.boolean().optional(),
+        days: z.number().int().min(1).max(30).optional(),
       })
       .parse(req.body);
     const j = db.prepare("SELECT * FROM judges WHERE id=?").get(req.params.id);
     if (!j) fail(404, "评委不存在");
-    changed("管理员", "更新评委权限", { id: j.id, ...v }, () =>
-      db
-        .prepare(
-          "UPDATE judges SET enabled=?,token_version=?,expires_at=? WHERE id=?",
-        )
-        .run(
-          v.enabled === undefined ? j.enabled : Number(v.enabled),
-          j.token_version + (v.rotate ? 1 : 0),
-          v.rotate ? Date.now() + 48 * 3600000 : j.expires_at,
-          j.id,
-        ),
+    if (v.enabled === undefined && !v.rotate && !v.renew)
+      fail(400, "请指定要执行的操作");
+    const days = v.days ?? DEFAULT_QR_DAYS;
+    let expiresAt = j.expires_at;
+    if (v.rotate) expiresAt = qrExpiry(days);
+    else if (v.renew) expiresAt = Math.max(expiresAt, qrExpiry(days));
+    changed(
+      "管理员",
+      v.renew && !v.rotate ? "续期评委二维码" : "更新评委权限",
+      { id: j.id, ...v, days },
+      () =>
+        db
+          .prepare(
+            "UPDATE judges SET enabled=?,token_version=?,expires_at=? WHERE id=?",
+          )
+          .run(
+            v.enabled === undefined ? j.enabled : Number(v.enabled),
+            j.token_version + (v.rotate ? 1 : 0),
+            expiresAt,
+            j.id,
+          ),
     );
     res.json({ ok: true });
   });
   app.get("/api/admin/judges/:id/link", admin, (req, res) => {
     const j = db.prepare("SELECT * FROM judges WHERE id=?").get(req.params.id);
     if (!j) fail(404, "评委不存在");
-    res.json({ url: `${publicUrl.origin}/judge#${tokenFor(j)}` });
+    const kind = req.query.kind === "test" ? "test" : "official";
+    res.json({
+      url: `${publicUrl.origin}/judge#${tokenFor(j, kind)}`,
+      expires_at: j.expires_at,
+      kind,
+      mode: kind === "test" ? "test" : "official",
+    });
   });
   app.get("/api/admin/judges/:id/qr", admin, async (req, res) => {
     const j = db.prepare("SELECT * FROM judges WHERE id=?").get(req.params.id);
     if (!j) fail(404, "评委不存在");
+    const kind = req.query.kind === "test" ? "test" : "official";
     const svg = await QRCode.toString(
-      `${publicUrl.origin}/judge#${tokenFor(j)}`,
+      `${publicUrl.origin}/judge#${tokenFor(j, kind)}`,
       { type: "svg", width: 280, margin: 3, errorCorrectionLevel: "M" },
     );
     res.type("image/svg+xml").send(svg);
@@ -1044,7 +1208,7 @@ export function createApp(config) {
         ...s,
         status,
         ...(status === "final"
-          ? { presentation: { view: "ranking", projectId: null } }
+          ? { presentation: { view: "ranking", projectId: null, startedAt: Date.now() } }
           : {}),
       }),
     );
@@ -1100,7 +1264,7 @@ export function createApp(config) {
       .object({
         projectId: z.string(),
         judgeIds: z.array(z.string()).min(1).max(100),
-        reason: z.string().trim().min(1).max(500),
+        reason: z.string().trim().max(500).default(""),
       })
       .parse(req.body);
     const settings = getSettings(db);
@@ -1155,15 +1319,40 @@ export function createApp(config) {
     if (getSettings(db).status === "final")
       fail(409, "最终成绩已发布，奖项已锁定");
     const v = z
-      .object({ name, recipient: name, note: text.default("") })
+      .object({ name, recipient: name })
       .parse(req.body);
     const id = randomUUID();
     changed("管理员", "新增个人奖项", v, () =>
       db
-        .prepare("INSERT INTO awards VALUES (?,?,?,?)")
-        .run(id, v.name, v.recipient, v.note),
+        .prepare("INSERT INTO awards VALUES (?,?,?,'')")
+        .run(id, v.name, v.recipient),
     );
     res.status(201).json({ id });
+  });
+  app.post("/api/admin/awards/bulk", admin, (req, res) => {
+    if (getSettings(db).status === "final")
+      fail(409, "最终成绩已发布，奖项已锁定");
+    const v = z
+      .object({
+        replace: z.boolean().default(false),
+        awards: z
+          .array(z.object({ name, recipient: name }))
+          .min(1)
+          .max(500),
+      })
+      .parse(req.body);
+    const rows = v.awards.map((a) => [randomUUID(), a.name, a.recipient]);
+    changed(
+      "管理员",
+      "批量导入个人奖项",
+      { count: rows.length, replace: v.replace },
+      () => {
+        if (v.replace) db.exec("DELETE FROM awards");
+        const insert = db.prepare("INSERT INTO awards VALUES (?,?,?,'')");
+        for (const row of rows) insert.run(...row);
+      },
+    );
+    res.status(201).json({ ok: true, count: rows.length });
   });
   app.delete("/api/admin/awards/:id", admin, (req, res) => {
     if (getSettings(db).status === "final")
@@ -1173,29 +1362,31 @@ export function createApp(config) {
     );
     res.json({ ok: true });
   });
+  const judgeProjects = db.prepare(`
+    SELECT p.id, p.name, p.team, p.position, p.status,
+           COALESCE(r.revision, 0) AS revision, e.total, e.submitted_at
+    FROM projects p
+    LEFT JOIN revisions r ON r.project_id=p.id AND r.phase=:phase AND r.round=:round AND r.judge_id=:judge
+    LEFT JOIN entries e ON e.project_id=p.id AND e.phase=:phase AND e.round=:round AND e.judge_id=:judge
+    ORDER BY p.position, p.rowid
+  `);
   app.get("/api/judge/state", judgeAuth, (req, res) => {
     judgePresence.set(req.judge.id, { at: Date.now(), version: req.judge.token_version });
-    const d = snapshot(),
-      s = d.settings;
+    const s = getSettings(db);
+    const judges = db.prepare("SELECT id FROM judges ORDER BY rowid").all();
+    const projects = judgeProjects.all({ phase: s.mode, round: s.currentRound, judge: req.judge.id });
     res.json({
-      settings: { ...s, releasedScores: undefined },
+      settings: { ...s, judgeCount: judges.length, projectCount: projects.length, releasedScores: undefined },
       judge: {
         id: req.judge.id,
-        number: d.judges.find((j) => j.id === req.judge.id).number,
+        number: judges.findIndex((j) => j.id === req.judge.id) + 1,
       },
-      projects: d.projects.map((p) => ({
-        id: p.id,
-        name: p.name,
-        team: p.team,
-        position: p.position,
-        status: p.status,
-        revision:
-          db
-            .prepare(
-              "SELECT revision FROM revisions WHERE phase=? AND round=? AND project_id=? AND judge_id=?",
-            )
-            .get(s.mode, s.currentRound, p.id, req.judge.id)?.revision || 0,
-        ownScore: p.scores.find((e) => e.judge_id === req.judge.id) || null,
+      projects: projects.map(({ total, submitted_at, ...project }) => ({
+        ...project,
+        ownScore: total == null ? null : {
+          phase: s.mode, round: s.currentRound, project_id: project.id,
+          judge_id: req.judge.id, total, submitted_at,
+        },
       })),
     });
   });
@@ -1300,8 +1491,8 @@ export function createApp(config) {
     }
     rows.push(
       [],
-      ["个人奖项", "获奖人", "说明"],
-      ...d.awards.map((a) => [a.name, a.recipient, a.note]),
+      ["单位", "姓名"],
+      ...d.awards.map((a) => [a.name, a.recipient]),
     );
     res
       .attachment("competition-results.csv")

@@ -1,0 +1,543 @@
+/*
+ * 配色主题层：默认「竞衡蓝白」沿用 styles.css 与 stages.css，不做改写。
+ * 「数智警蓝」从赛事主视觉提取正蓝、青光与警徽金，收敛高亮卡片后重新校准。
+ * 原则：背景保留主视觉识别度，信息依靠明度与留白分层，金色只用于关键结果。
+ */
+:root[data-theme="police"] {
+  --primary: #245fa8;
+  --primary-dark: #174b88;
+  --primary-bright: #1761bd;
+  --muted: #526b87;
+  --line: #d8e3f0;
+  --surface: #fff;
+  --accent: #e7eff9;
+  --bg: #f0f4fa;
+  --navy: #123f7d;
+  --navy-deep: #0b2f61;
+  --royal: #1761bd;
+  --gold: #ddb76d;
+  --gold-bright: #ffe6aa;
+  --gold-deep: #7d5b22;
+  --cyan: #64c8d5;
+  --chrome-ink: #edf4fc;
+  --chrome-muted: #c3d5eb;
+  --chrome-line: rgba(185, 210, 237, 0.26);
+  --chrome-grad: linear-gradient(180deg, #123e7d 0%, #1a4b8b 52%, #10376e 100%);
+  --stage-grad:
+    radial-gradient(96% 21% at 50% 108%, rgba(75, 211, 226, 0.4), rgba(75, 211, 226, 0) 72%),
+    radial-gradient(76% 54% at 88% -16%, rgba(20, 105, 226, 0.52), transparent 72%),
+    linear-gradient(166deg, #0c4cb8 0%, #184e9a 38%, #174789 70%, #103b78 100%);
+  color: #233b54;
+  background: var(--bg);
+  scrollbar-color: #9bb1ca #f0f4fa;
+}
+:root[data-theme="police"] ::selection {
+  background: rgba(199, 170, 112, 0.3);
+  color: #182c42;
+}
+
+/* ---------- 应用外壳 ---------- */
+:root[data-theme="police"] .sidebar {
+  background: var(--chrome-grad);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--chrome-ink);
+  overflow: hidden;
+}
+:root[data-theme="police"] .sidebar::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 170px;
+  background: radial-gradient(110% 90% at 15% 110%, rgba(75, 211, 226, 0.13), transparent 72%);
+  pointer-events: none;
+}
+:root[data-theme="police"] .sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+:root[data-theme="police"] .brand {
+  color: #f4f6f8;
+}
+:root[data-theme="police"] .brand-mark {
+  background: #d2b77e;
+  color: #243e5a;
+  box-shadow: 0 4px 12px rgba(7, 20, 33, 0.24);
+}
+:root[data-theme="police"] .sidebar nav a {
+  position: relative;
+  color: var(--chrome-muted);
+}
+:root[data-theme="police"] .sidebar nav a:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f6f8;
+}
+:root[data-theme="police"] .sidebar nav a.active {
+  background: rgba(224, 205, 165, 0.1);
+  color: #ead6aa;
+}
+:root[data-theme="police"] .sidebar-bottom {
+  padding-top: 18px;
+}
+:root[data-theme="police"] .account {
+  border-top-color: rgba(255, 255, 255, 0.11);
+  color: var(--chrome-muted);
+}
+:root[data-theme="police"] .avatar {
+  background: rgba(255, 255, 255, 0.09);
+  color: #ddc795;
+}
+:root[data-theme="police"] .side-note,
+:root[data-theme="police"] .side-note small {
+  color: var(--chrome-muted);
+}
+:root[data-theme="police"] .topbar {
+  position: relative;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  border-bottom-color: var(--line);
+}
+:root[data-theme="police"] .topbar-left {
+  color: #304658;
+}
+:root[data-theme="police"] .topbar-left > svg {
+  color: var(--primary);
+}
+:root[data-theme="police"] .screen-link {
+  color: #455b6d;
+  border-left-color: var(--line);
+}
+:root[data-theme="police"] .connection,
+:root[data-theme="police"] .icon-button {
+  color: #536777;
+}
+:root[data-theme="police"] .icon-button:hover {
+  background: var(--accent);
+  color: var(--primary);
+}
+:root[data-theme="police"] .demo-label {
+  color: var(--gold-deep);
+  background: #f7f2e8;
+  border-color: #e8ddc7;
+}
+
+/* ---------- 工作区表面 ---------- */
+:root[data-theme="police"] .page-title h1,
+:root[data-theme="police"] .stats-strip strong,
+:root[data-theme="police"] .section-title strong {
+  color: #263f55;
+}
+:root[data-theme="police"] .panel,
+:root[data-theme="police"] .stats-strip,
+:root[data-theme="police"] .score-panel,
+:root[data-theme="police"] .operator-panel {
+  border-color: var(--line);
+  box-shadow: 0 1px 2px rgba(25, 47, 68, 0.035);
+}
+:root[data-theme="police"] .button {
+  border-color: #ced9e2;
+  color: #3d5264;
+}
+:root[data-theme="police"] .button.danger-text {
+  color: #a04e45;
+}
+:root[data-theme="police"] .button:hover {
+  background: #edf2f6;
+  border-color: #aebfcb;
+}
+:root[data-theme="police"] .button.primary {
+  color: #fff;
+  background: linear-gradient(135deg, #245fa8, #1c67b7);
+  border-color: #245fa8;
+  box-shadow: 0 3px 10px rgba(23, 75, 136, 0.18);
+}
+:root[data-theme="police"] .button.primary:hover {
+  background: #174b88;
+  border-color: #174b88;
+}
+:root[data-theme="police"] th {
+  background: #f3f6f8;
+  color: #5d6e80;
+}
+:root[data-theme="police"] td {
+  border-top-color: #edf1f4;
+}
+:root[data-theme="police"] .tabs button.selected:after {
+  background: linear-gradient(90deg, #245fa8, #64c8d5);
+}
+:root[data-theme="police"] .badge.open,
+:root[data-theme="police"] .badge.running {
+  color: #315873;
+  background: #e8eff3;
+}
+:root[data-theme="police"] .badge.paused {
+  color: var(--gold-deep);
+  background: #f6f1e7;
+}
+:root[data-theme="police"] .operator-heading {
+  background: linear-gradient(115deg, #173f76, #205b9b 68%, #2368a9);
+  color: #f5f8fc;
+}
+:root[data-theme="police"] .operator-heading > span {
+  color: #cbdcef;
+}
+:root[data-theme="police"] .operator-panel .control-bar {
+  background: #f1f6fc;
+}
+:root[data-theme="police"] .core-links a:hover {
+  background: var(--accent);
+}
+:root[data-theme="police"] .toast {
+  border-left-color: var(--line);
+}
+:root[data-theme="police"] .toast.toast-error {
+  border-left-color: #d9c8c4;
+}
+
+/* ---------- 现场大屏：保留主视觉正蓝与底部青光 ---------- */
+:root[data-theme="police"] .stage-view {
+  --ink: #edf4fc;
+  --stage-muted: #bed1e9;
+  --edge: rgba(178, 207, 237, 0.3);
+  position: relative;
+  border-top: 0;
+  background: var(--stage-grad);
+  color: var(--ink);
+}
+:root[data-theme="police"] .stage-view::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(100, 220, 232, 0.78) 24%, rgba(255, 230, 170, 0.88) 50%, rgba(100, 220, 232, 0.78) 76%, transparent);
+  box-shadow: 0 0 30px 6px rgba(75, 211, 226, 0.22);
+  pointer-events: none;
+}
+:root[data-theme="police"] .stage-view > header {
+  border-bottom-color: rgba(185, 202, 214, 0.19);
+}
+:root[data-theme="police"] .stage-view .screen-event {
+  background: linear-gradient(180deg, #fff9e5 0%, #ffe8ae 48%, #e5bc71 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 8px rgba(6, 29, 66, 0.32));
+  font-weight: 650;
+  letter-spacing: 0.015em;
+}
+:root[data-theme="police"] .stage-view .screen-tools,
+:root[data-theme="police"] .stage-view .screen-tools h1 {
+  color: var(--stage-muted);
+}
+:root[data-theme="police"] .stage-view > footer {
+  color: #94a8b8;
+}
+:root[data-theme="police"] .stage-view .stage-heading {
+  background: linear-gradient(180deg, #fff9e5, #ffe8ae 52%, #e5bc71);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  font-weight: 650;
+}
+:root[data-theme="police"] .stage-view .current-info h2 {
+  color: #f1f4f6;
+  font-weight: 600;
+}
+:root[data-theme="police"] .stage-view .team-prefix {
+  color: #f0d296;
+  font-weight: 500;
+}
+:root[data-theme="police"] .stage-view .badge {
+  color: #c5e9ee;
+  background: rgba(86, 190, 207, 0.12);
+  border: 1px solid rgba(133, 211, 222, 0.34);
+}
+
+/* 总得分保留蓝金主视觉，但用深蓝层次替代高亮发光。 */
+:root[data-theme="police"] .stage-view .featured-score {
+  position: relative;
+  background: linear-gradient(140deg, #0c3979 0%, #125293 64%, #1a64a6 100%);
+  border: 1px solid rgba(255, 230, 170, 0.46);
+  box-shadow: 0 14px 34px rgba(4, 25, 62, 0.24);
+}
+:root[data-theme="police"] .stage-view .featured-score > span,
+:root[data-theme="police"] .stage-view .featured-score small {
+  color: #d0e0f1;
+}
+:root[data-theme="police"] .stage-view .featured-score strong {
+  color: #ffe6aa;
+  text-shadow: 0 2px 14px rgba(255, 214, 135, 0.12);
+  font-size: clamp(68px, min(7.8vw, 14vh), 164px);
+  font-weight: 700;
+}
+:root[data-theme="police"] .score-progress i {
+  background: rgba(213, 230, 244, 0.16);
+}
+:root[data-theme="police"] .score-progress .filled {
+  background: linear-gradient(90deg, #65c7d5, #e6c782);
+}
+
+/* 评委卡使用统一正蓝，不再灰化，也不叠加高亮青光。 */
+:root[data-theme="police"] .stage-view .judge-score {
+  background: rgba(12, 57, 119, 0.58);
+  border-color: rgba(164, 199, 232, 0.34);
+  backdrop-filter: none;
+  box-shadow: 0 6px 18px rgba(4, 25, 62, 0.1);
+}
+:root[data-theme="police"] .stage-view .judge-score > div {
+  color: #bed1e7;
+}
+:root[data-theme="police"] .stage-view .judge-score > strong,
+:root[data-theme="police"] .stage-view .judge-score > .judge-value {
+  color: #f4f7fb;
+  text-shadow: none;
+}
+:root[data-theme="police"] .stage-view .judge-score > .submission-state {
+  color: #adc6df;
+}
+:root[data-theme="police"] .stage-view .submitted {
+  background: rgba(20, 76, 143, 0.64);
+  border-color: rgba(157, 201, 234, 0.44);
+}
+:root[data-theme="police"] .stage-view .submitted > .submission-state {
+  color: #c2e2ea;
+}
+:root[data-theme="police"] .stage-view .concealed .submitted {
+  background: rgba(20, 76, 143, 0.78);
+}
+:root[data-theme="police"] .stage-view .concealed .submitted .judge-seat b {
+  color: #eef2f4;
+}
+:root[data-theme="police"] .stage-view .concealed .submission-state {
+  background: rgba(15, 33, 49, 0.28);
+  color: #b1c0cb;
+}
+:root[data-theme="police"] .stage-view .concealed .submitted .submission-state {
+  background: #276aa4;
+  color: #f2f7fb;
+}
+:root[data-theme="police"] .stage-view .revealed .judge-score small {
+  background: rgba(20, 39, 56, 0.36);
+  color: #c6d0d7;
+}
+/* 亮分过渡中的极值只作轻提示，沿用同一套蓝灰与暖金。 */
+:root[data-theme="police"] .stage-view .stage-score .judge-score.extreme {
+  background: rgba(46, 75, 119, 0.82);
+  border: 1px solid rgba(238, 204, 137, 0.72);
+}
+:root[data-theme="police"] .stage-view .stage-score .judge-score.extreme > .judge-value,
+:root[data-theme="police"] .stage-view .stage-score .judge-score.extreme strong {
+  color: #e3cd9e;
+}
+:root[data-theme="police"] .stage-view .stage-score .judge-score.extreme small {
+  color: #d8c7a5;
+  background: rgba(199, 170, 112, 0.12);
+}
+/* 剔除是降权信息：灰化数值，温和暖灰标签，不再使用整条高亮金。 */
+:root[data-theme="police"] .stage-view .reveal-step-3 .judge-score.excluded {
+  --exclusion-ink: #9aaab6;
+  background: rgba(30, 50, 68, 0.68);
+  border-color: rgba(148, 165, 177, 0.2);
+  box-shadow: none;
+}
+:root[data-theme="police"] .stage-view .reveal-step-3 .judge-score.excluded > .judge-value,
+:root[data-theme="police"] .stage-view .reveal-step-3 .judge-score.excluded strong {
+  color: #9aaab6;
+}
+:root[data-theme="police"] .stage-view .reveal-step-3 .judge-score.excluded small {
+  color: #b8ad99;
+  background: rgba(169, 147, 111, 0.11);
+  font-weight: 500;
+}
+
+/* 排名：行卡片与打分页共用表面，前三甲仅小面积点缀。 */
+:root[data-theme="police"] .stage-view .standing-row {
+  background: rgba(13, 57, 116, 0.5);
+  border: 1px solid var(--chrome-line);
+  color: #edf4fc;
+}
+:root[data-theme="police"] .stage-view .place-1 {
+  background: rgba(30, 74, 135, 0.62);
+}
+:root[data-theme="police"] .stage-view .standing-row .rank-num {
+  color: #bdcbd5;
+}
+:root[data-theme="police"] .stage-view .place-1 .rank-num {
+  color: #e3cd9e;
+}
+:root[data-theme="police"] .stage-view .place-2 .rank-num {
+  color: #d4dfe6;
+}
+:root[data-theme="police"] .stage-view .place-3 .rank-num {
+  color: #ceb39c;
+}
+:root[data-theme="police"] .stage-view .standing-team {
+  color: #f0f3f5;
+}
+:root[data-theme="police"] .stage-view .standing-score {
+  color: #e4cf9f;
+}
+:root[data-theme="police"] .stage-view .prize-label {
+  border-color: currentColor;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d4dfe6;
+}
+:root[data-theme="police"] .stage-view .prize-label.medal-1 {
+  color: #e3cd9e;
+  background: rgba(199, 170, 112, 0.1);
+}
+:root[data-theme="police"] .stage-view .prize-label.medal-2 {
+  color: #d4dfe6;
+  background: rgba(190, 204, 214, 0.09);
+}
+:root[data-theme="police"] .stage-view .prize-label.medal-3 {
+  color: #ceb39c;
+  background: rgba(185, 155, 130, 0.1);
+}
+
+/* 颁奖 */
+:root[data-theme="police"] .stage-view.ceremony {
+  background: var(--stage-grad);
+  --edge: var(--chrome-line);
+  --stage-muted: #bed1e9;
+  border-top: 0;
+}
+:root[data-theme="police"] .ceremony .honor-winner,
+:root[data-theme="police"] .ceremony .personal-honor {
+  background: rgba(13, 57, 116, 0.5);
+  border: 1px solid var(--chrome-line);
+  backdrop-filter: none;
+}
+:root[data-theme="police"] .ceremony .honor-grid p {
+  color: #c2cfd8;
+}
+:root[data-theme="police"] .stage-view .honor-heading,
+:root[data-theme="police"] .stage-view .personal-award-title {
+  color: #d7bf90;
+}
+
+/* 候场 / 休息封面 */
+:root[data-theme="police"] .stage-cover {
+  color: #f0f3f5;
+}
+:root[data-theme="police"] .stage-cover-mark {
+  color: #cfb782;
+  filter: none;
+}
+:root[data-theme="police"] .stage-cover h1 {
+  background: linear-gradient(180deg, #fff9e5 0%, #ffe8ae 46%, #e5bc71 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 3px 12px rgba(6, 29, 66, 0.34));
+  font-weight: 650;
+}
+:root[data-theme="police"] .stage-cover > p {
+  color: #bdcad4;
+}
+:root[data-theme="police"] .stage-cover .stage-clock strong {
+  color: #edf2f4;
+  text-shadow: none;
+}
+:root[data-theme="police"] .stage-cover .stage-clock > span {
+  color: #9fb1bf;
+}
+:root[data-theme="police"] .stage-empty h1 {
+  color: #e3cd9e;
+}
+:root[data-theme="police"] .screen-preview {
+  background: #123e7d;
+}
+
+/* 打印与席位卡保持浅色，避免深底耗墨。 */
+@media print {
+  :root[data-theme="police"] .stage-view::after {
+    display: none;
+  }
+  :root[data-theme="police"] .stage-view,
+  :root[data-theme="police"] .stage-view.ceremony {
+    background: #fff !important;
+    color: #29465f !important;
+    border: 0 !important;
+  }
+  :root[data-theme="police"] .stage-view :is(.screen-event, .stage-heading, .stage-cover h1) {
+    background: none;
+    -webkit-text-fill-color: #29465f;
+    color: #29465f;
+    filter: none;
+  }
+  :root[data-theme="police"] .stage-view :is(.judge-score, .standing-row, .featured-score, .honor-winner, .personal-honor) {
+    background: #fff !important;
+    color: #29465f !important;
+    border-color: #d3dfe6 !important;
+    box-shadow: none !important;
+    backdrop-filter: none;
+  }
+  :root[data-theme="police"] .stage-view :is(.judge-score, .standing-row, .featured-score) * {
+    color: #3e5364 !important;
+    -webkit-text-fill-color: #3e5364;
+  }
+  :root[data-theme="police"] .stage-view :is(.team-prefix, .badge, .screen-tools, .screen-tools h1, footer) {
+    color: #29465f !important;
+    background: none !important;
+    border-color: #d3dfe6 !important;
+  }
+}
+
+/* ---------- 主题切换 ---------- */
+.theme-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 14px 0 2px;
+}
+.theme-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: #4c5a6d;
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: left;
+}
+.theme-option:hover {
+  border-color: #b4c7d4;
+}
+.theme-option .swatch {
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(10, 30, 60, 0.12);
+}
+.swatch-default {
+  background: linear-gradient(135deg, #1457a6 0 52%, #eef3fa 52% 100%);
+}
+.swatch-police {
+  background: linear-gradient(135deg, #123e7d 0 52%, #ddb76d 52% 100%);
+}
+.theme-option[aria-pressed="true"] {
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+:root[data-theme="police"] .theme-option {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.13);
+  color: var(--chrome-muted);
+}
+:root[data-theme="police"] .theme-option:hover {
+  border-color: rgba(215, 191, 144, 0.38);
+}
+:root[data-theme="police"] .theme-option[aria-pressed="true"] {
+  background: rgba(199, 170, 112, 0.1);
+  border-color: rgba(215, 191, 144, 0.42);
+  color: #e3cd9e;
+  box-shadow: none;
+}

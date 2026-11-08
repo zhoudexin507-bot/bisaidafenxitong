@@ -1,13 +1,8 @@
 import { isScoreReleased } from "./stage.js";
+import { resultPages, resultViews } from "../shared/slides.js";
 // A single forward action is derived from the persisted competition state.
 export function pageCount(data, view) {
-  const count =
-    view === "ranking"
-      ? data.ranking.length
-      : view === "teamAwards"
-        ? data.ranking.filter((p) => p.prize).length
-        : data.awards.length;
-  return Math.max(1, Math.ceil(count / (view === "teamAwards" ? 3 : 8)));
+  return Math.max(1, resultPages(data, view).length);
 }
 
 export function nextSlide(data) {
@@ -27,13 +22,10 @@ export function nextSlide(data) {
       return step("view", "展示得分排名", { view: "ranking", page: 0 });
     if (page < pageCount(data, view) - 1)
       return step("view", "下一页", { view, page: page + 1 });
-    if (view === "ranking")
-      return step("view", "展示团体奖项", { view: "teamAwards", page: 0 });
-    if (view === "teamAwards")
-      return step("view", "展示个人奖项", {
-        view: "individualAwards",
-        page: 0,
-      });
+    const views = resultViews(data);
+    const following = views[views.indexOf(view) + 1];
+    if (following)
+      return step("view", following === "teamAwards" ? "展示团体奖项" : "展示个人奖项", { view: following, page: 0 });
     return step("done", "展示完毕", { enabled: false });
   }
   if (!data.projects.length || !data.judges.length)
