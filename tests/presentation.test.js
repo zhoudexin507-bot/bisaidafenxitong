@@ -116,6 +116,7 @@ test("presenter paginates persisted final slides and handles ties without leavin
     await f.ok("/admin/awards", "POST", {
       name: "个人奖",
       recipient: `人员${i}`,
+      level: i === 0 ? 1 : i <= 2 ? 2 : 3,
       note: "",
     });
   await f.rehearse();
@@ -148,39 +149,51 @@ test("presenter paginates persisted final slides and handles ties without leavin
   await next();
   assert.equal((await state()).settings.presentation.view, "teamAwards");
   await next();
+  assert.equal((await state()).settings.presentation.page, 1);
   await next();
   assert.equal((await state()).settings.presentation.page, 2);
   await next();
-  assert.equal((await state()).settings.presentation.page, 3);
-  await next();
   assert.equal((await state()).settings.presentation.view, "individualAwards");
+  // 个人奖三个等级各一页：三等 6 人 → 二等 2 人 → 一等 1 人
   await next();
   assert.equal((await state()).settings.presentation.page, 1);
+  await next();
+  assert.equal((await state()).settings.presentation.page, 2);
   assert.equal((await state()).presenter.next.enabled, false);
-  for (let i = 0; i < 2; i++)
+  for (let i = 0; i < 3; i++)
     await f.ok("/admin/presenter/previous", "POST", {
       key: (await state()).presenter.next.key,
     });
   s = await state();
   assert.equal(s.settings.presentation.view, "teamAwards");
-  assert.equal(s.settings.presentation.page, 3);
+  assert.equal(s.settings.presentation.page, 2);
   assert.equal(s.settings.presentation.reviewing, true);
 });
 
-test("团体奖从三等奖揭晓，跳过空奖级，同级每四队一页", () => {
+test("团体奖从三等奖揭晓，跳过空奖级，每个奖级一页", () => {
   const ranking = [1, 3, 3, 3, 3, 3, null].map((prize, id) => ({ prize, id }));
   assert.deepEqual(resultPages({ ranking }, "teamAwards").map((page) => page.map((team) => team.id)),
-    [[1, 2, 3, 4], [5], [0]]);
+    [[1, 2, 3, 4, 5], [0]]);
   ranking[6].prize = 2;
-  assert.deepEqual(resultPages({ ranking }, "teamAwards").map((page) => page[0].prize), [3, 3, 2, 1]);
+  assert.deepEqual(resultPages({ ranking }, "teamAwards").map((page) => page[0].prize), [3, 2, 1]);
   assert.deepEqual(resultPages({ ranking: [] }, "teamAwards"), []);
   assert.deepEqual(resultViews({ ranking: [], settings: { presentation: { view: "ranking" } } }),
     ["ranking", "individualAwards"]);
 });
 
-test("个人奖保持录入顺序，每六人一页", () => {
-  const awards = Array.from({ length: 8 }, (_, i) => i);
-  assert.deepEqual(resultPages({ awards }, "individualAwards"), [[0, 1, 2, 3, 4, 5], [6, 7]]);
+test("个人奖按等级分页：三等 → 二等 → 一等，未分组垫底", () => {
+  const awards = [
+    { id: 1, level: 1 },
+    { id: 2, level: 0 },
+    { id: 3, level: 3 },
+    { id: 4, level: 2 },
+    { id: 5, level: 3 },
+    { id: 6 },
+  ];
+  assert.deepEqual(
+    resultPages({ awards }, "individualAwards").map((page) => page.map((a) => a.id)),
+    [[3, 5], [4], [1], [2, 6]],
+  );
 });
 
 test("test phase previews the full award ceremony without touching official results", async (t) => {

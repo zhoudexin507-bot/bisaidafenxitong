@@ -34,7 +34,9 @@ test("home title switch, private layout preview and published results use the sa
     await expect(screen.locator(".board-home")).toHaveCSS("background-image", /backgrounds\/home/);
     await screen.setViewportSize({ width: 1024, height: 768 });
     const rect = await screen.locator(".board-home").boundingBox();
-    expect(rect.width / rect.height).toBeCloseTo(16 / 9, 2);
+    // 背景画布铺满整个视口，不再按 16:9 留黑边
+    expect(rect.width).toBe(1024);
+    expect(rect.height).toBe(768);
     await screen.setViewportSize({ width: 1920, height: 1080 });
     await admin.locator(".layout-pickers").getByRole("button", { name: "得分排名" }).click();
     await expect(admin.getByText("赛前排版使用示例数据")).toBeVisible();
@@ -55,8 +57,10 @@ test("home title switch, private layout preview and published results use the sa
     await f.ok("/admin/awards", "POST", { name: "测试单位", recipient: "获奖人甲" });
     await f.ok("/admin/status", "POST", { status: "final" });
     for (const [view, name] of [["ranking", "得分排名"], ["teamAwards", "团体奖项"], ["individualAwards", "个人奖项"]]) {
+      // 点击直接请求服务器切换；重载大屏页避免依赖 SSE 刷新时序
       await admin.getByRole("button", { name, exact: true }).click();
       const board = screen.locator(`.board-${view}`);
+      await screen.reload();
       await expect(board).toHaveCSS("background-image", /backgrounds\/awards/);
       await expect(board).toContainText(view === "individualAwards" ? "获奖人甲" : project.team);
       if (view === "ranking") {

@@ -51,6 +51,14 @@ export function openDatabase(path) {
   ) {
     db.exec("ALTER TABLE projects ADD COLUMN members TEXT NOT NULL DEFAULT ''");
   }
+  // 个人奖项等级：0=未分组，1/2/3=一/二/三等奖
+  if (
+    !db
+      .prepare("PRAGMA table_info(awards)")
+      .all()
+      .some((c) => c.name === "level")
+  )
+    db.exec("ALTER TABLE awards ADD COLUMN level INTEGER NOT NULL DEFAULT 0");
   db.prepare("INSERT OR IGNORE INTO settings VALUES (1, ?)").run(
     JSON.stringify(defaultSettings),
   );

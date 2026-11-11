@@ -1038,6 +1038,7 @@ export function createApp(config) {
       .object({
         view: z.enum(["project", "ranking", "teamAwards", "individualAwards"]),
         projectId: z.string().nullable().default(null),
+        page: z.number().int().min(0).max(999).optional(),
       })
       .parse(req.body);
     const settings = getSettings(db);
@@ -1055,7 +1056,10 @@ export function createApp(config) {
       saveSettings(db, { ...settings,
         stage: presentation.view !== "project" && settings.stage.scene !== "live"
           ? changeStage(settings, { action: "scene", scene: "live" }).stage : settings.stage,
-        presentation: { ...presentation, startedAt: Date.now() } }),
+        presentation: { ...settings.presentation, ...presentation,
+          // 切换画面回到第一页；后台翻页时显式携带 page
+          page: presentation.view === "project" ? 0 : presentation.page ?? 0,
+          startedAt: Date.now() } }),
     );
     res.json({ ok: true });
   });
@@ -1339,19 +1343,31 @@ export function createApp(config) {
     });
     res.json({ ok: true, reset: ids.length });
   });
+  const awardLevel = z.number().int().min(0).max(3).default(0);
   app.post("/api/admin/awards", admin, (req, res) => {
     if (getSettings(db).status === "final")
       fail(409, "最终成绩已发布，奖项已锁定");
     const v = z
-      .object({ name, recipient: name })
+      .object({ name, recipient: name, level: awardLevel })
       .parse(req.body);
     const id = randomUUID();
     changed("管理员", "新增个人奖项", v, () =>
       db
-        .prepare("INSERT INTO awards VALUES (?,?,?,'')")
-        .run(id, v.name, v.recipient),
+        .prepare("INSERT INTO awards VALUES (?,?,?,'',?)")
+        .run(id, v.name, v.recipient, v.level),
     );
     res.status(201).json({ id });
+  });
+  app.put("/api/admin/awards/:id", admin, (req, res) => {
+    if (getSettings(db).status === "final")
+      fail(409, "最终成绩已发布，奖项已锁定");
+    const { level } = z.object({ level: awardLevel }).parse(req.body);
+    if (!db.prepare("SELECT id FROM awards WHERE id=?").get(req.params.id))
+      fail(404, "奖项不存在");
+    changed("管理员", "修改个人奖项等级", { id: req.params.id, level }, () =>
+      db.prepare("UPDATE awards SET level=? WHERE id=?").run(level, req.params.id),
+    );
+    res.json({ ok: true });
   });
   app.post("/api/admin/awards/bulk", admin, (req, res) => {
     if (getSettings(db).status === "final")
@@ -1360,19 +1376,19 @@ export function createApp(config) {
       .object({
         replace: z.boolean().default(false),
         awards: z
-          .array(z.object({ name, recipient: name }))
+          .array(z.object({ name, recipient: name, level: awardLevel }))
           .min(1)
           .max(500),
       })
       .parse(req.body);
-    const rows = v.awards.map((a) => [randomUUID(), a.name, a.recipient]);
+    const rows = v.awards.map((a) => [randomUUID(), a.name, a.recipient, a.level]);
     changed(
       "管理员",
       "批量导入个人奖项",
       { count: rows.length, replace: v.replace },
       () => {
         if (v.replace) db.exec("DELETE FROM awards");
-        const insert = db.prepare("INSERT INTO awards VALUES (?,?,?,'')");
+        const insert = db.prepare("INSERT INTO awards VALUES (?,?,?,'',?)");
         for (const row of rows) insert.run(...row);
       },
     );

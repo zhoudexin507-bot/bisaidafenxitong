@@ -13,14 +13,23 @@ export function resultViews(data) {
     : ["ranking", "individualAwards"];
 }
 
+// 个人奖项等级名：0=未分组，1/2/3=一/二/三等奖
+export const awardLevelNames = ["个人奖", "一等奖", "二等奖", "三等奖"];
+
 // Each page carries just the records its view renders, in presentation order.
+// 团体奖与个人奖均按等级整页展示（三等 → 二等 → 一等，未分组垫底），空等级自动跳过；
+// 具体显示哪一页由后台大屏控制切换，大屏端不再自动轮播。
 export function resultPages(data, view) {
   if (view === "teamAwards") {
-    return [3, 2, 1].flatMap((level) =>
-      chunks(data.ranking.filter((team) => team.prize === level), 4),
-    );
+    return [3, 2, 1]
+      .map((level) => data.ranking.filter((team) => team.prize === level))
+      .filter((teams) => teams.length);
   }
-  if (view === "individualAwards") return chunks(data.awards, 6);
+  if (view === "individualAwards") {
+    return [3, 2, 1, 0]
+      .map((level) => data.awards.filter((award) => (award.level || 0) === level))
+      .filter((persons) => persons.length);
+  }
   if (view === "ranking") return chunks(data.ranking, 8);
   return [];
 }

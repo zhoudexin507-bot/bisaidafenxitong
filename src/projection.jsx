@@ -33,16 +33,27 @@ export function ProjectionBoard({ data, view, records, page = 0, pages = 1, draf
       {layer("content", <div key={view + page} className={`stage-results ${settings.presentation.reviewing ? "reviewing" : "entering"}`}>
         <ResultsView data={view === "individualAwards" ? { awards: records } : { ranking: records }} view={view} />
       </div>)}
-      {pages > 1 && layer("page", <span>{page + 1} / {pages}</span>, "screen-pagination")}
     </>}
   </section>;
 }
 
-const sampleResults = {
-  ranking: ["第一代表队", "第二代表队", "第三代表队"].map((team, i) => ({
-    id: i, team, rank: i + 1, prize: i + 1, result: { complete: true, average: 98 - i }, members: "示例队员",
+// 赛前预览与排版使用的示例数据：结构与真实名单一致，覆盖各奖级
+export const sampleResults = {
+  ranking: Array.from({ length: 8 }, (_, i) => ({
+    id: i,
+    team: `第${"一二三四五六七八"[i]}代表队`,
+    rank: i + 1,
+    prize: i === 0 ? 1 : i < 3 ? 2 : 3,
+    result: { complete: true, average: 97.5 - i * 1.5 },
+    members: "示例队员甲、示例队员乙",
   })),
-  awards: [{ id: 1, name: "示例单位", recipient: "示例获奖人" }],
+  awards: [
+    { id: 1, name: "数智攻坚单位", recipient: "王示例", level: 1 },
+    { id: 2, name: "数据侦查大队", recipient: "李示例", level: 2 },
+    { id: 3, name: "情报研判中心", recipient: "张示例", level: 2 },
+    { id: 4, name: "经侦一线支队", recipient: "赵示例", level: 3 },
+    { id: 5, name: "合成作战中心", recipient: "钱示例", level: 3 },
+  ],
 };
 
 const colorPresets = ["#ffffff", "#ffe4a8", "#ffcf5c", "#cfe0f7", "#8ec5ff", "#103b75"];

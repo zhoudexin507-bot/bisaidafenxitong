@@ -1,6 +1,6 @@
-.projection-screen { position: relative; height: 100dvh; width: 100%; }
-.projection-screen:has(> .with-artwork) { display: grid; place-items: center; background: #12283c; }
-.projection-screen > .with-artwork { width: min(100%, 177.77778dvh); height: auto; aspect-ratio: 16 / 9; }
+.projection-screen { position: relative; height: 100dvh; width: 100%; background: #12283c; }
+/* 背景画布铺满整屏（cover 裁切），不再按 16:9 留黑边 */
+.projection-screen > .with-artwork { width: 100%; height: 100%; }
 .projection-connection { position: absolute; top: 12px; right: 12px; }
 /* 测试阶段收官预演的防混淆角标：与正式发布画面一眼区分 */
 .projection-badge {
@@ -16,8 +16,28 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #12283c center / contain no-repeat;
+  background: #12283c center / cover no-repeat;
   color: white;
+}
+/* 内置红金庆典背景（未上传背景图时的默认画面），复刻颁奖海报：
+   深红舞台渐晕 → 底部放射波纹 → 金色地平线光晕 → 顶部金色光晕与光尘。
+   上传自定义背景图后由行内样式覆盖，此层自动退场。 */
+.projection-board:not(.with-artwork) {
+  background-color: #8b0f0f;
+  background-image:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1920 1080' preserveAspectRatio='none'%3E%3Cg fill='%23ffd98a'%3E%3Ccircle cx='140' cy='150' r='1.8' opacity='.45'/%3E%3Ccircle cx='260' cy='80' r='1.3' opacity='.3'/%3E%3Ccircle cx='330' cy='300' r='2.2' opacity='.5'/%3E%3Ccircle cx='430' cy='140' r='1.5' opacity='.35'/%3E%3Ccircle cx='520' cy='240' r='2.8' opacity='.6'/%3E%3Ccircle cx='610' cy='90' r='1.2' opacity='.28'/%3E%3Ccircle cx='680' cy='360' r='1.8' opacity='.42'/%3E%3Ccircle cx='850' cy='60' r='1.4' opacity='.3'/%3E%3Ccircle cx='905' cy='280' r='2' opacity='.5'/%3E%3Ccircle cx='1035' cy='340' r='1.6' opacity='.38'/%3E%3Ccircle cx='1180' cy='220' r='1.3' opacity='.3'/%3E%3Ccircle cx='1330' cy='320' r='1.7' opacity='.4'/%3E%3Ccircle cx='1400' cy='110' r='1.9' opacity='.44'/%3E%3Ccircle cx='1540' cy='70' r='1.2' opacity='.26'/%3E%3Ccircle cx='1610' cy='190' r='2.1' opacity='.48'/%3E%3Ccircle cx='1680' cy='330' r='1.5' opacity='.34'/%3E%3Ccircle cx='1820' cy='260' r='1.6' opacity='.36'/%3E%3Ccircle cx='520' cy='430' r='1.4' opacity='.3'/%3E%3Ccircle cx='760' cy='470' r='1.8' opacity='.4'/%3E%3Ccircle cx='1080' cy='450' r='1.3' opacity='.28'/%3E%3Ccircle cx='1360' cy='430' r='1.9' opacity='.4'/%3E%3Ccircle cx='1620' cy='480' r='1.5' opacity='.32'/%3E%3Ccircle cx='960' cy='420' r='2.2' opacity='.45'/%3E%3C/g%3E%3Cg fill='%23ffedbb'%3E%3Ccircle cx='760' cy='180' r='3' opacity='.65'/%3E%3Ccircle cx='960' cy='140' r='3.2' opacity='.7'/%3E%3Ccircle cx='1110' cy='90' r='2.4' opacity='.55'/%3E%3Ccircle cx='1250' cy='150' r='2.6' opacity='.58'/%3E%3Ccircle cx='1470' cy='250' r='3' opacity='.62'/%3E%3Ccircle cx='1750' cy='130' r='2.5' opacity='.55'/%3E%3C/g%3E%3Cg fill='%23ffe9b0' opacity='.16'%3E%3Ccircle cx='960' cy='180' r='6'/%3E%3Ccircle cx='480' cy='120' r='5'/%3E%3Ccircle cx='1420' cy='170' r='5'/%3E%3C/g%3E%3C/svg%3E"),
+    radial-gradient(60% 34% at 50% 0%, rgb(255 196 100 / .22), rgb(255 196 100 / 0) 70%),
+    radial-gradient(46% 22% at 50% 84%,
+      #ffedb2 0%, #ffc763 16%, rgb(255 150 60 / .5) 36%,
+      rgb(226 92 40 / .2) 54%, rgb(226 92 40 / 0) 72%),
+    repeating-radial-gradient(160% 68% at 50% 122%,
+      rgb(0 0 0 / 0) 0 30px, rgb(96 8 8 / .42) 30px 33px,
+      rgb(0 0 0 / 0) 33px 74px, rgb(122 13 13 / .34) 74px 76px,
+      rgb(0 0 0 / 0) 76px 126px),
+    radial-gradient(125% 100% at 50% 34%,
+      #d5291d 0%, #c21b1b 42%, #a31212 70%, #7c0b0e 100%);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
 }
 .projection-board .projection-layer {
   font-size: calc(var(--text-size) * min(0.05208333cqw, 0.09259259cqh));
@@ -54,7 +74,27 @@
 .projection-board .standing-team { text-align: left; }
 .projection-board .standing-score { font-variant-numeric: tabular-nums; }
 .projection-board .prize-label { background: transparent; border: 0; font-size: .78em; }
-.projection-board .honor-heading { color: inherit; font-size: 1.25em; margin-bottom: .75em; }
+/* 奖项标题（团体奖与个人奖的奖级名）：复刻颁奖海报的金色立体渐变材质 ——
+   超粗黑体、亮金→正金→古铜垂直渐变、深棕浮雕挤出、金色光晕。
+   color 保留实色兜底（渐变不可用时仍可读，也是对比度检测取到的有效色）。 */
+.projection-board .honor-heading {
+  font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  font-size: 1.9em;
+  margin-bottom: .55em;
+  color: #f5c542;
+  text-shadow: none;
+  background: linear-gradient(180deg,
+    #fff3c4 2%, #f7cf5f 36%, #eab836 60%, #c98a1e 84%, #a5691a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter:
+    drop-shadow(0 0.05em 0.015em #7a4a08)
+    drop-shadow(0 0.1em 0.3em rgb(96 14 6 / .5))
+    drop-shadow(0 0 0.45em rgb(255 200 80 / .35));
+}
 .projection-board .honor-grid { gap: .6em; }
 .projection-board :is(.honor-winner, .personal-honor) {
   padding: .28em .2em;
@@ -62,14 +102,48 @@
   border: 0;
   text-align: center;
 }
-.projection-board .winner-members, .projection-board .personal-award-title {
+/* 获奖队伍名 / 个人姓名：纯白粗体 + 暖色轻投影（复刻海报名单样式） */
+.projection-board :is(.honor-winner, .personal-honor) h3 {
+  font-size: 1.1em;
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: 0 0.05em 0.16em rgb(96 14 6 / .45);
+}
+/* 整页只有一位获奖者 / 一支队伍时进一步放大 */
+.projection-board .honor-winner:only-child h3,
+.projection-board .personal-honor:only-child h3 { font-size: 1.5em; }
+.projection-board .winner-members {
   margin: .45em 0;
-  font-size: .66em;
+  font-size: .72em;
+  font-weight: 600;
   line-height: 1.4;
+  color: #fff;
+  text-shadow: 0 0.05em 0.16em rgb(96 14 6 / .45);
 }
 .projection-board .entering :is(.personal-honor, .honor-winner) { animation: slide-in .5s ease-out backwards; }
-.projection-board .screen-pagination { display: block; margin: 0; padding: 0; }
-.projection-board .screen-pagination span { font: inherit; color: inherit; }
+/* 背景首页主标题：与奖级标题一致的金色立体渐变材质；副标题为白色辅以暖色投影 */
+.projection-board.board-home .layer-title h1 {
+  font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  color: #f5c542;
+  text-shadow: none;
+  background: linear-gradient(180deg,
+    #fff3c4 2%, #f7cf5f 36%, #eab836 60%, #c98a1e 84%, #a5691a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter:
+    drop-shadow(0 0.05em 0.015em #7a4a08)
+    drop-shadow(0 0.1em 0.3em rgb(96 14 6 / .5))
+    drop-shadow(0 0 0.45em rgb(255 200 80 / .35));
+}
+.projection-board.board-home .layer-subtitle p {
+  color: #fff;
+  font-weight: 600;
+  text-shadow: 0 0.06em 0.22em rgb(96 14 6 / .5);
+}
 .projection-preview-canvas {
   width: 1920px;
   height: 1080px;

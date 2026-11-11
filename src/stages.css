@@ -589,6 +589,18 @@
   overflow-wrap: anywhere;
 }
 .stage-view .team-prefix { font: 500 0.72em var(--score-font); }
+/* 队伍名旁的小号项目名称 */
+.stage-view .stage-project-name {
+  display: inline-block;
+  margin-left: 0.4em;
+  font-size: 0.3em;
+  font-weight: 500;
+  color: var(--stage-muted);
+  vertical-align: middle;
+  line-height: 1.35;
+  max-width: 14em;
+  overflow-wrap: anywhere;
+}
 .stage-view .badge { font-size: clamp(14px, 2vh, 22px); }
 .stage-view .featured-score {
   min-width: 0;

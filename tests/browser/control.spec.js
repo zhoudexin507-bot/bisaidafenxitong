@@ -24,7 +24,7 @@ test("control desk, concise single-round screen, editable awards and archive-to-
     prizes: [1, 0, 0],
   });
   db.exec(
-    "INSERT INTO projects(id,name,team,position,status) VALUES ('p','这段项目小字不应在大屏重复','第三代表队',3,'open'); INSERT INTO judges(id,name,expires_at) VALUES ('a','甲',9999999999999),('b','乙',9999999999999),('c','丙',9999999999999); INSERT INTO entries VALUES ('official',1,'p','a',9000,'2026-10-31T00:00:00Z')",
+    "INSERT INTO projects(id,name,team,position,status) VALUES ('p','山地铁道攀登演练','第三代表队',3,'open'); INSERT INTO judges(id,name,expires_at) VALUES ('a','甲',9999999999999),('b','乙',9999999999999),('c','丙',9999999999999); INSERT INTO entries VALUES ('official',1,'p','a',9000,'2026-10-31T00:00:00Z')",
   );
   const server = service.app.listen(3002, "127.0.0.1");
   await once(server, "listening");
@@ -67,11 +67,15 @@ test("control desk, concise single-round screen, editable awards and archive-to-
       page.getByRole("heading", { name: "重新评分", exact: true }),
     ).toBeVisible();
     await screen.goto(base + "/");
-    await expect(screen.locator(".current-info h2")).toHaveText("03第三代表队");
-    await expect(screen.locator(".current-info")).not.toContainText("号队伍");
-    await expect(screen.locator(".current-info")).not.toContainText(
-      "这段项目小字",
+    // 队伍名旁以小字号显示项目名称
+    await expect(screen.locator(".current-info h2")).toContainText("03");
+    await expect(screen.locator(".current-info h2")).toContainText(
+      "第三代表队",
     );
+    await expect(screen.locator(".stage-project-name")).toHaveText(
+      "山地铁道攀登演练",
+    );
+    await expect(screen.locator(".current-info")).not.toContainText("号队伍");
     await expect(screen.locator(".current-info")).not.toContainText("轮");
     await screen.screenshot({
       path: ".impeccable/review/concise-screen.png",

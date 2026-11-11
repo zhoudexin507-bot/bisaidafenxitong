@@ -38,10 +38,10 @@ for (const judges of [7, 30]) {
           position: i + 1, members: "陈志远、王晓峰、刘文静",
         });
       }
-      const recipients = ["王晓峰", "陈志远", "刘文静"];
-      if (judges === 30) recipients.push("李明", "赵晓", "孙宁", "林涛");
-      for (const name of recipients) {
-        await f.ok("/admin/awards", "POST", { name: "特警支队", recipient: name });
+      const recipients = [["王晓峰", 1], ["陈志远", 2], ["刘文静", 2]];
+      if (judges === 30) recipients.push(["李明", 3], ["赵晓", 3], ["孙宁", 3], ["林涛", 3]);
+      for (const [name, level] of recipients) {
+        await f.ok("/admin/awards", "POST", { name: "特警支队", recipient: name, level });
       }
       const tokens = await f.tokens();
       const state = async () => (await f.request("/admin/presenter/state")).data;
@@ -83,12 +83,16 @@ for (const judges of [7, 30]) {
       await check("测试评分", (page) => expect(page.locator(".screen-tools")).toContainText("测试评分"));
       const phases = screens[0].locator(".stage-score").evaluate((panel) => new Promise((resolve) => {
         const seen = [];
-        const observer = new MutationObserver(() => {
-          const step = panel.dataset.revealStep;
-          if (step !== "waiting" && step !== seen.at(-1)) seen.push(step);
-          if (step === "3") { observer.disconnect(); resolve(seen); }
+        const push = (value) => {
+          if (value && value !== "waiting" && value !== seen.at(-1)) seen.push(value);
+        };
+        const observer = new MutationObserver((records) => {
+          // 高负载下多条变更可能合并进一次回调，用 oldValue 重建完整序列避免丢步
+          for (const record of records) push(record.oldValue);
+          push(panel.dataset.revealStep);
+          if (panel.dataset.revealStep === "3") { observer.disconnect(); resolve(seen); }
         });
-        observer.observe(panel, { attributes: true, attributeFilter: ["data-reveal-step"] });
+        observer.observe(panel, { attributes: true, attributeFilter: ["data-reveal-step"], attributeOldValue: true });
       }));
       await submit(teams[0], 0, 0);
       await check("测试亮分", (page) => expect(page.locator(".final-score")).toBeVisible({ timeout: 8000 }));
@@ -123,24 +127,28 @@ for (const judges of [7, 30]) {
         await expect(page.locator(".standing-row")).toHaveCount(8);
         await expect(page.locator(".prize-label")).toHaveCount(8);
       });
-      for (const [level, count] of [["三等奖", 4], ["三等奖", 1], ["二等奖", 2], ["一等奖", 1]]) {
+      for (const [level, count] of [["三等奖", 5], ["二等奖", 2], ["一等奖", 1]]) {
         await next();
         await check(level + "-" + count, async (page) => {
           await expect(page.locator(".honor-heading")).toHaveText(level);
           await expect(page.locator(".honor-winner")).toHaveCount(count);
-          for (const selector of [".screen-event", ".screen-tools h1", ".honor-heading", ".honor-winner h3", ".winner-members", ".screen-pagination span"])
+          for (const selector of [".screen-event", ".screen-tools h1", ".honor-heading", ".honor-winner h3", ".winner-members"])
             await checkTextContrast(page.locator(selector));
         });
       }
-      await next();
-      await check("个人奖项", async (page) => {
-        await expect(page.locator(".personal-honor h3")).toHaveText(recipients.slice(0, 6));
-        for (const selector of [".personal-award-title", ".personal-honor h3"])
-          await checkTextContrast(page.locator(selector));
-      });
-      if (recipients.length > 6) {
+      const individualLevels = [
+        ["三等奖", recipients.filter(([, level]) => level === 3).map(([name]) => name)],
+        ["二等奖", recipients.filter(([, level]) => level === 2).map(([name]) => name)],
+        ["一等奖", recipients.filter(([, level]) => level === 1).map(([name]) => name)],
+      ].filter(([, names]) => names.length);
+      for (const [level, names] of individualLevels) {
         await next();
-        await check("个人奖末页", (page) => expect(page.locator(".personal-honor h3")).toHaveText(["林涛"]));
+        await check("个人奖-" + level, async (page) => {
+          await expect(page.locator(".honor-heading")).toHaveText(level);
+          await expect(page.locator(".personal-honor h3")).toHaveText(names);
+          for (const selector of [".honor-heading", ".personal-honor h3", ".personal-honor .winner-members"])
+            await checkTextContrast(page.locator(selector));
+        });
       }
     } finally {
       await Promise.all(screens.map((page) => page.close()));

@@ -77,11 +77,12 @@ transaction(db, () => {
         ),
     );
   });
-  db.prepare("INSERT INTO awards VALUES (?,?,?,?)").run(
+  db.prepare("INSERT INTO awards VALUES (?,?,?,?,?)").run(
     randomUUID(),
     "最佳协作奖",
     "王晓峰",
     "表彰出色的团队协作与现场组织能力",
+    1,
   );
   audit(db, "系统", "加载演示数据", { demo: true });
 });

@@ -21,7 +21,7 @@ test("button-free presentation runs rehearsal, rejudge, next team and awards in 
     prizes: [1, 1, 0],
   });
   service.db.exec(
-    "INSERT INTO projects(id,name,team,position,members) VALUES ('p1','项目一','第一代表队',1,'张明、李华'),('p2','项目二','第二代表队',2,'王强、陈杰'); INSERT INTO judges(id,name,expires_at) VALUES ('a','不应展示的姓名甲',9999999999999),('b','不应展示的姓名乙',9999999999999),('c','不应展示的姓名丙',9999999999999); INSERT INTO awards VALUES ('award','最佳协作奖','张明','')",
+    "INSERT INTO projects(id,name,team,position,members) VALUES ('p1','项目一','第一代表队',1,'张明、李华'),('p2','项目二','第二代表队',2,'王强、陈杰'); INSERT INTO judges(id,name,expires_at) VALUES ('a','不应展示的姓名甲',9999999999999),('b','不应展示的姓名乙',9999999999999),('c','不应展示的姓名丙',9999999999999); INSERT INTO awards VALUES ('award','最佳协作奖','张明','',1)",
   );
   const server = service.app.listen(3002, "127.0.0.1");
   await once(server, "listening");

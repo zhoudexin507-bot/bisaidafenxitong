@@ -8,6 +8,7 @@ import {
   Award,
   Check,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   ClipboardList,
   Clock3,
@@ -37,13 +38,13 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { resultPages } from "../shared/slides.js";
+import { resultPages, awardLevelNames } from "../shared/slides.js";
 import "./styles.css";
 import "./stages.css";
 import { LiveDesk, StageControls, StageCover } from "./live-desk.jsx";
 import { applyTheme, readTheme, THEMES } from "./theme.js";
 import "./themes.css";
-import { LayoutPreview, ProjectionBoard } from "./projection.jsx";
+import { LayoutPreview, ProjectionBoard, sampleResults } from "./projection.jsx";
 
 const statusNames = {
   draft: "筹备中",
@@ -208,6 +209,9 @@ function PageTitle({ title, children }) {
 }
 function Modal({ title, children, onClose }) {
   const ref = useRef(null);
+  // 拖选弹窗内的文本（如输入框内容）时 mouseup 常落在遮罩上，
+  // click 目标会变成 dialog 自身；只有按下与松开都在遮罩上才算点击遮罩关闭。
+  const pressedBackdrop = useRef(false);
   useEffect(() => {
     ref.current.showModal();
   }, []);
@@ -215,8 +219,11 @@ function Modal({ title, children, onClose }) {
     <dialog
       ref={ref}
       onCancel={onClose}
+      onMouseDown={(e) => {
+        pressedBackdrop.current = e.target === ref.current;
+      }}
       onClick={(e) => {
-        if (e.target === ref.current) onClose();
+        if (e.target === ref.current && pressedBackdrop.current) onClose();
       }}
     >
       <div className="dialog-head">
@@ -438,6 +445,9 @@ function ScorePanel({ project, data, onRevealChange }) {
               <span className="team-prefix">{String(project.position).padStart(2, "0")}</span>
             )}
             {project.team}
+            {project.name && project.name !== project.team && (
+              <span className="stage-project-name">{project.name}</span>
+            )}
           </h2>
         </div>
         <div className="featured-score" aria-live="polite">
@@ -949,12 +959,26 @@ function ResultsView({ data, view }) {
     );
   }
   if (!data.awards.length) return <Empty title="暂无个人奖项" />;
+  // 按等级分组展示（三等 → 二等 → 一等 → 未分组）；投屏时每页传入一个等级，管理页传入全部
+  const groups = [3, 2, 1, 0]
+    .map((level) => ({
+      level,
+      awards: data.awards.filter((award) => (award.level || 0) === level),
+    }))
+    .filter((group) => group.awards.length);
   return (
-    <div className="personal-honors honor-grid medal-1" style={{ "--columns": Math.min(data.awards.length, 3) }}>
-      {data.awards.map((award, i) => (
-        <section className="personal-honor" key={award.id} style={{ "--index": i }}>
-          <h2 className="personal-award-title">{award.name}</h2>
-          <h3>{award.recipient}</h3>
+    <div className="team-honors">
+      {groups.map(({ level, awards }) => (
+        <section key={level} className={`team-honor medal-${level || 1}`}>
+          <h2 className="honor-heading">{awardLevelNames[level]}</h2>
+          <div className="honor-grid" style={{ "--columns": Math.min(awards.length, 5) }}>
+            {awards.map((award, i) => (
+              <article className="honor-winner personal-honor" key={award.id} style={{ "--index": i }}>
+                <h3>{award.recipient}</h3>
+                <p className="winner-members">{award.name}</p>
+              </article>
+            ))}
+          </div>
         </section>
       ))}
     </div>
@@ -1064,6 +1088,29 @@ const backgroundKinds = [
   ["awards", "排名与颁奖"],
 ];
 
+// 超清大图直接上屏会边下载边逐行解码，切换画面时明显卡顿。
+// 上传前在本地压到 1080p JPEG（动图和已足够小的图保持原样）。
+async function compressBackground(file) {
+  if (file.type === "image/gif" || file.size <= 1.5 * 1024 * 1024) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1920 / bitmap.width, 1080 / bitmap.height);
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.86),
+    );
+    return blob && blob.size < file.size ? blob : file;
+  } catch {
+    return file;
+  }
+}
+
 function BackgroundSettings({ data, refresh }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
@@ -1073,11 +1120,12 @@ function BackgroundSettings({ data, refresh }) {
     setBusy(kind);
     setError(null);
     try {
+      const payload = method === "PUT" && file ? await compressBackground(file) : file;
       const response = await fetch(`/api/admin/backgrounds/${kind}`, {
         method,
         credentials: "same-origin",
-        headers: { "Content-Type": file ? file.type : "application/json" },
-        body: file || "{}",
+        headers: { "Content-Type": payload ? payload.type : "application/json" },
+        body: payload || "{}",
       });
       const value = await response.json().catch(() => ({}));
       if (!response.ok)
@@ -1093,7 +1141,7 @@ function BackgroundSettings({ data, refresh }) {
     <section className="panel display-control background-settings">
       <h2>背景图片</h2>
       <p className="table-sub">
-        建议使用 16:9 图片，每张不超过 10 MB。排名、团体奖和个人奖共用一张颁奖背景图；背景图自带赛事文字时，可在排版预览中关闭系统标题。
+        建议使用 16:9 图片，每张不超过 10 MB；超过 1.5 MB 的静态图会自动压缩到 1080p，避免大屏切换卡顿。未上传时使用内置红金庆典背景（深红渐变 + 金色光晕），上传后自动覆盖，清除图片即恢复内置背景。排名、团体奖和个人奖共用一张颁奖背景图；背景图自带赛事文字时，可在排版预览中关闭系统标题。
       </p>
       {backgroundKinds.map(([kind, label]) => {
         const version = backgrounds[kind];
@@ -1149,14 +1197,74 @@ function BackgroundSettings({ data, refresh }) {
   );
 }
 
+// 赛前（成绩未发布）用示例数据检查排名与颁奖画面，不影响现场大屏
+function CeremonySamplePreview({ data, view }) {
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [view]);
+  const sample = { ...data, ...sampleResults, settings: { ...data.settings, presentation: { ...data.settings.presentation } } };
+  const slides = resultPages(sample, view);
+  const pages = Math.max(1, slides.length);
+  const index = Math.min(page, pages - 1);
+  const label = (i) => {
+    const records = slides[i];
+    if (view === "teamAwards" && records?.[0])
+      return `${prizeNames[records[0].prize] || `第 ${i + 1} 页`}（${records.length} 队）`;
+    if (view === "individualAwards" && records?.[0])
+      return `${awardLevelNames[records[0].level || 0]}（${records.length} 人）`;
+    return `第 ${i + 1} 页`;
+  };
+  return (
+    <>
+      {pages > 1 && (
+        <div className="scene-pages sample-preview-pages" aria-label="预览页面切换">
+          <button className="button scene-page-button" disabled={index === 0}
+            aria-label="上一页" onClick={() => setPage(index - 1)}><ChevronLeft size={16} /></button>
+          <select className="scene-page-select" aria-label="选择预览页面" value={index}
+            onChange={(e) => setPage(Number(e.target.value))}>
+            {slides.map((_, i) => <option key={i} value={i}>{label(i)}</option>)}
+          </select>
+          <button className="button scene-page-button" disabled={index >= pages - 1}
+            aria-label="下一页" onClick={() => setPage(index + 1)}><ChevronRight size={16} /></button>
+          <span className="scene-pages-count">{index + 1} / {pages} 页</span>
+        </div>
+      )}
+      <ScreenPreview>
+        <ProjectionBoard data={sample} view={view} page={index} pages={pages}
+          records={slides[index] || []} ResultsView={ResultsView} />
+      </ScreenPreview>
+    </>
+  );
+}
+
 function PresentationControls({ data, act, refresh }) {
   const [editing, setEditing] = useState(false);
+  const [sampleView, setSampleView] = useState(null);
+  const [sampleReason, setSampleReason] = useState("");
   const presentation = data.settings.presentation;
   const current =
     data.projects.find((p) => p.id === presentation.projectId) ||
     data.projects.find((p) => ["ready", "open"].includes(p.status)) ||
     data.projects[0];
   const final = data.settings.status === "final";
+  // 颁奖画面切换：始终由服务器裁决——本地数据可能滞后（如刚发布成绩），
+  // 成功则真正切屏；服务器以 409 拒绝（成绩未发布）时才进入示例数据预览。
+  async function toggleAwardView(view) {
+    setSampleReason("");
+    try {
+      await api("/admin/presentation", "POST", { view });
+      setSampleView(null);
+      await refresh?.();
+    } catch (e) {
+      setEditing(false);
+      setSampleView(view);
+      setSampleReason(e.message || "成绩尚未发布");
+    }
+  }
+  // 真实颁奖画面已切出时，退出示例预览
+  useEffect(() => {
+    if (data.settings.status === "final" && data.settings.presentation.view !== "project")
+      setSampleView(null);
+  }, [data.settings.status, data.settings.presentation.view]);
   return (
     <div className="display-page">
       <PageTitle title="大屏控制">
@@ -1173,7 +1281,7 @@ function PresentationControls({ data, act, refresh }) {
       <div className="display-layout">
         <div className="display-controls">
           <CompetitionControls data={data} act={act} />
-          <StageControls data={data} act={act} />
+          <StageControls data={data} act={act} onToggle={toggleAwardView} />
           {!final && (
             <section className="panel display-control">
               <h2 className="display-section-title">大屏内容</h2>
@@ -1252,9 +1360,21 @@ function PresentationControls({ data, act, refresh }) {
         </div>
         <div className="display-preview">
           <div className="preview-heading">
-            <h2>{editing ? "排版预览" : "当前大屏"}</h2>
+            <h2>
+              {editing
+                ? "排版预览"
+                : sampleView
+                  ? `示例数据预览 · ${displayViews.find(([id]) => id === sampleView)?.[1] || ""}`
+                  : "当前大屏"}
+            </h2>
             <div className="preview-tools">
-              <Button aria-pressed={editing} onClick={() => setEditing(!editing)}>{editing ? "返回现场预览" : "排版预览"}</Button>
+              {sampleView && !editing && (
+                <Button onClick={() => setSampleView(null)}>返回现场预览</Button>
+              )}
+              <Button aria-pressed={editing} onClick={() => {
+                if (!editing) setSampleView(null);
+                setEditing(!editing);
+              }}>{editing ? "返回现场预览" : "排版预览"}</Button>
               <a href="/screen" target="_blank" rel="noreferrer">
                 只读大屏
               </a>
@@ -1265,7 +1385,14 @@ function PresentationControls({ data, act, refresh }) {
               </label>
             </div>
           </div>
-          {editing ? <LayoutPreview data={data} act={act} ScreenPreview={ScreenPreview} ResultsView={ResultsView} /> : <ScreenPreview />}
+          {editing ? <LayoutPreview data={data} act={act} ScreenPreview={ScreenPreview} ResultsView={ResultsView} />
+            : sampleView ? (
+              <>
+                {sampleReason && <p className="sample-preview-reason">{sampleReason}，当前为示例数据预览。</p>}
+                <CeremonySamplePreview data={data} view={sampleView} />
+              </>
+            )
+            : <ScreenPreview />}
         </div>
       </div>
     </div>
@@ -2258,32 +2385,45 @@ function parseCsvTable(text) {
   }
   return rows;
 }
+function parseAwardLevel(value) {
+  const v = String(value ?? "").trim();
+  if (/^[一二三]等奖/.test(v)) return "一二三".indexOf(v[0]) + 1;
+  if (/^[123]$/.test(v)) return Number(v);
+  return 0;
+}
 function awardsFromRows(rows) {
   const cleaned = rows.map((r) => r.map((c) => String(c ?? "").trim()));
   let unitIdx = 0,
     nameIdx = 1,
+    levelIdx = -1,
     start = 0;
   const header = cleaned[0] || [];
   const unitHeader = header.findIndex((c) => /^(?:所属)?单位(?:名称)?$/.test(c));
   const nameHeader = header.findIndex((c) => /^(?:姓名|获奖人(?:姓名)?)$/.test(c));
+  const levelHeader = header.findIndex((c) => /^(?:奖项(?:等级)?|奖级|等级)$/.test(c));
   if (unitHeader >= 0 && nameHeader >= 0) {
     start = 1;
     unitIdx = unitHeader;
     nameIdx = nameHeader;
+    levelIdx = levelHeader;
   }
   const awards = [];
   for (const r of cleaned.slice(start)) {
     const unit = (r[unitIdx] || "").slice(0, 100);
     const person = (r[nameIdx] || "").slice(0, 100);
     if (!unit && !person) continue;
-    awards.push({ name: unit, recipient: person });
+    awards.push({
+      name: unit,
+      recipient: person,
+      level: levelIdx >= 0 ? parseAwardLevel(r[levelIdx]) : 0,
+    });
   }
   return awards;
 }
 
 function Awards({ data, act }) {
   const [prizes, setPrizes] = useState(data.settings.prizes);
-  const [form, setForm] = useState({ name: "", recipient: "" });
+  const [form, setForm] = useState({ name: "", recipient: "", level: 0 });
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState(null);
   const [importError, setImportError] = useState(null);
@@ -2411,7 +2551,8 @@ function Awards({ data, act }) {
               setBusy(true);
               try {
                 await act("/admin/awards", "POST", form);
-                setForm({ name: "", recipient: "" });
+                // 连续录入时保留等级，免得每条都重选
+                setForm({ name: "", recipient: "", level: form.level });
               } catch {
               } finally {
                 setBusy(false);
@@ -2438,6 +2579,20 @@ function Awards({ data, act }) {
                   }
                 />
               </Field>
+              <Field label="奖项等级">
+                <select
+                  value={form.level}
+                  onChange={(e) =>
+                    setForm({ ...form, level: Number(e.target.value) })
+                  }
+                >
+                  {awardLevelNames.map((label, level) => (
+                    <option key={level} value={level}>
+                      {level === 0 ? "未分组" : label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </div>
             <Button kind="primary" icon={Plus} disabled={busy}>
               添加个人奖项
@@ -2445,33 +2600,33 @@ function Awards({ data, act }) {
           </form>
         )}
         {!locked && (
-          <div className="award-import">
-            <h3>批量导入</h3>
-            <p className="table-sub">
-              支持 Excel（.xlsx / .xls）或 CSV 表格，仅需两列：单位、姓名。
-            </p>
-            <div className="actions">
-              <label className="button">
-                <Upload size={16} />
-                选择表格文件
-                <input
-                  type="file"
-                  accept=".csv,.txt,.xlsx,.xls"
-                  hidden
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (file) loadFile(file);
-                  }}
-                />
-              </label>
-              <details className="inline-help">
-                <summary>或粘贴表格文本</summary>
-                <textarea
-                  placeholder="单位，姓名（可用逗号、制表符或直接从 Excel 复制粘贴）"
-                  value={pasteText}
-                  onChange={(e) => setPasteText(e.target.value)}
-                />
+              <div className="award-import">
+                <h3>批量导入</h3>
+                <p className="table-sub">
+                  支持 Excel（.xlsx / .xls）或 CSV 表格，两列（单位、姓名）或三列（单位、姓名、奖项：一等奖 / 二等奖 / 三等奖）。
+                </p>
+                <div className="actions">
+                  <label className="button">
+                    <Upload size={16} />
+                    选择表格文件
+                    <input
+                      type="file"
+                      accept=".csv,.txt,.xlsx,.xls"
+                      hidden
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file) loadFile(file);
+                      }}
+                    />
+                  </label>
+                  <details className="inline-help">
+                    <summary>或粘贴表格文本</summary>
+                    <textarea
+                      placeholder="单位，姓名，奖项（可用逗号、制表符或直接从 Excel 复制粘贴）"
+                      value={pasteText}
+                      onChange={(e) => setPasteText(e.target.value)}
+                    />
                 <Button
                   type="button"
                   disabled={!pasteText.trim()}
@@ -2502,6 +2657,7 @@ function Awards({ data, act }) {
                       <tr>
                         <th>单位</th>
                         <th>姓名</th>
+                        <th>奖项</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2509,6 +2665,7 @@ function Awards({ data, act }) {
                         <tr key={i}>
                           <td>{a.name}</td>
                           <td>{a.recipient}</td>
+                          <td>{a.level ? awardLevelNames[a.level] : "未分组"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -2550,6 +2707,23 @@ function Awards({ data, act }) {
               <strong>{a.recipient}</strong>
               <p>{a.name}</p>
             </div>
+            <select
+              className="award-level-select"
+              aria-label={`${a.recipient}的奖项等级`}
+              disabled={locked}
+              value={a.level || 0}
+              onChange={(e) =>
+                act(`/admin/awards/${a.id}`, "PUT", {
+                  level: Number(e.target.value),
+                })
+              }
+            >
+              {awardLevelNames.map((label, level) => (
+                <option key={level} value={level}>
+                  {level === 0 ? "未分组" : label}
+                </option>
+              ))}
+            </select>
             {!locked && (
               <Button
                 kind="danger-text"
@@ -3363,19 +3537,26 @@ function Screen({ data, connected, presenter = false, refresh }) {
     data.projects.find((p) => p.id === data.settings.presentation.projectId) ||
     data.projects.find((p) => ["ready", "open"].includes(p.status)) ||
     data.projects[0];
-  const [localPage, setPage] = useState(0);
   const [reveal, setReveal] = useState(null);
-  const manual = presenter || data.settings.presentation.manual;
+  // 排名与颁奖页面由后台大屏控制逐页切换，大屏端只跟随后台页码，不再自动轮播。
   const slides = resultPages(data, view);
   const pages = Math.max(1, slides.length);
-  const page = Math.min(manual ? data.settings.presentation.page || 0 : localPage, pages - 1);
+  const page = Math.min(data.settings.presentation.page || 0, pages - 1);
   const records = slides[page] || [];
   const covered = data.settings.stage?.scene && data.settings.stage.scene !== "live";
   const board = covered ? (data.settings.stage.scene === "home" ? "home" : null)
     : view !== "project" ? view : null;
-  const startedAt = data.settings.presentation.startedAt;
-  // Legacy saved views have no start time and rotate from the moment they open.
-  const elapsed = startedAt ? Math.max(0, Date.parse(data.serverTime) - startedAt) : 0;
+  // 背景图提前下载并解码：切换画面时直接命中缓存，避免大图边下边画的卡顿。
+  const backgroundKey = Object.entries(data.backgrounds || {})
+    .map(([kind, version]) => `${kind}:${version}`)
+    .join("|");
+  useEffect(() => {
+    for (const [kind, version] of Object.entries(data.backgrounds || {})) {
+      const image = new Image();
+      image.src = `/api/backgrounds/${kind}?v=${version}`;
+      image.decode().catch(() => {});
+    }
+  }, [backgroundKey]);
   useEffect(() => {
     const handler = (e) => {
       if (
@@ -3396,22 +3577,6 @@ function Screen({ data, connected, presenter = false, refresh }) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
-  useEffect(() => {
-    setPage(0);
-  }, [view]);
-  useEffect(() => {
-    if (manual || pages <= 1) return;
-    // The preview and independently opened screens follow the same stage clock.
-    const advance = Math.floor(elapsed / 12000);
-    setPage(advance % pages);
-    let interval;
-    const timer = setTimeout(() => {
-      const next = () => setPage((n) => (n + 1) % pages);
-      next();
-      interval = setInterval(next, 12000);
-    }, 12000 - elapsed % 12000);
-    return () => { clearTimeout(timer); clearInterval(interval); };
-  }, [pages, view, manual, elapsed]);
   return (
     <div
       className={`${board ? "projection-screen" : "screen-page stage-view"} stage-${view} stage-scene-${data.settings.stage?.scene || "live"} ${presenter ? "presenter-screen" : ""}`}

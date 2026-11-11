@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { ArrowRight, CheckCircle2, Circle, Clock3, ExternalLink, Monitor, Pause, Play, RotateCw, Users } from "lucide-react";
-import { resultViews } from "../shared/slides.js";
+import { ArrowRight, CheckCircle2, ChevronLeft, ChevronRight, Circle, Clock3, ExternalLink, Monitor, Pause, Play, RotateCw, Users } from "lucide-react";
+import { awardLevelNames, resultPages, resultViews } from "../shared/slides.js";
 import "./live-desk.css";
 
 export function StageClock({ stage, serverTime }) {
@@ -37,7 +37,7 @@ export function StageCover({ data }) {
   );
 }
 
-export function StageControls({ data, act }) {
+export function StageControls({ data, act, onToggle }) {
   const stage = data.settings.stage || { scene: "live", version: 0, remainingMs: 0 };
   const [message, setMessage] = useState(stage.message || "");
   const [minutes, setMinutes] = useState(5);
@@ -54,6 +54,14 @@ export function StageControls({ data, act }) {
     if (busy) return;
     setBusy(true);
     try { await act("/admin/presentation", "POST", projectId ? { view, projectId } : { view }); }
+    catch { /* The shared action notice reports the server error. */ }
+    finally { setBusy(false); }
+  }
+  // 颁奖页面逐页由后台控制；大屏端不自动轮播、不响应点击翻页
+  async function showPage(page) {
+    if (busy) return;
+    setBusy(true);
+    try { await act("/admin/presentation", "POST", { view, page }); }
     catch { /* The shared action notice reports the server error. */ }
     finally { setBusy(false); }
   }
@@ -78,6 +86,17 @@ export function StageControls({ data, act }) {
   const nextView = awardsReady
     ? resultViews(data)[resultViews(data).indexOf(view) + 1]
     : undefined;
+  const prizeNames = ["", "一等奖", "二等奖", "三等奖"];
+  const slides = awardsReady && live && view !== "project" ? resultPages(data, view) : [];
+  const pageIndex = Math.min(data.settings.presentation.page || 0, Math.max(0, slides.length - 1));
+  const pageLabel = (i) => {
+    const records = slides[i];
+    if (view === "teamAwards" && records?.[0])
+      return `${prizeNames[records[0].prize] || `第 ${i + 1} 页`}（${records.length} 队）`;
+    if (view === "individualAwards" && records?.[0])
+      return `${awardLevelNames[records[0].level || 0]}（${records.length} 人）`;
+    return `第 ${i + 1} 页`;
+  };
   const validMinutes = minutes !== "" && Number.isFinite(Number(minutes)) && Number(minutes) >= 0 && Number(minutes) <= 120;
   return <section className="director-tools" aria-labelledby="stage-control-title">
     <div className="desk-heading"><h2 id="stage-control-title">现场画面</h2>
@@ -108,11 +127,29 @@ export function StageControls({ data, act }) {
       <div className="scene-switch" role="group" aria-label="排名与颁奖投屏">
         {awardViews.map(([id, label]) =>
           <button key={id} className={`button ${live && view === id ? "primary" : ""}`} aria-pressed={live && view === id}
-            disabled={busy || !awardsReady} onClick={() => showView(id)}>{label}</button>)}
+            disabled={busy || !onToggle}
+            title={awardsReady ? "" : "成绩未发布：点击用示例数据预览画面"}
+            onClick={() => onToggle?.(id)}>{label}</button>)}
       </div>
+      {!awardsReady && (
+        <p className="desk-note scene-preview-note">成绩未发布：点击以上画面可先用示例数据预览，不影响现场大屏。</p>
+      )}
       {awardsReady && nextView && <button className="button primary scene-next" disabled={busy} onClick={() => showView(nextView)}>
         <ArrowRight size={15} />下一步：{awardViews.find(([id]) => id === nextView)?.[1]}
       </button>}
+      {slides.length > 1 && (
+        <div className="scene-pages" aria-label="颁奖页面切换">
+          <button className="button scene-page-button" disabled={busy || pageIndex === 0}
+            aria-label="上一页" onClick={() => showPage(pageIndex - 1)}><ChevronLeft size={16} /></button>
+          <select className="scene-page-select" aria-label="选择颁奖页面" value={pageIndex} disabled={busy}
+            onChange={(e) => showPage(Number(e.target.value))}>
+            {slides.map((_, i) => <option key={i} value={i}>{pageLabel(i)}</option>)}
+          </select>
+          <button className="button scene-page-button" disabled={busy || pageIndex >= slides.length - 1}
+            aria-label="下一页" onClick={() => showPage(pageIndex + 1)}><ChevronRight size={16} /></button>
+          <span className="scene-pages-count">{pageIndex + 1} / {slides.length} 页</span>
+        </div>
+      )}
     </div>
     <div className="stage-inputs">
       <label className="field"><span>候场 / 休息提示</span><input maxLength={100} value={message} placeholder="例如：请评委就座，比赛即将开始" onChange={(e) => setMessage(e.target.value)} /></label>

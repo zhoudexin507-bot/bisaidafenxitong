@@ -1208,8 +1208,22 @@ dialog form > p {
   font-size: 12px;
   margin-top: 6px;
 }
-.award-edit-row .button {
+.award-edit-row .award-level-select {
   margin-left: auto;
+  width: auto;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid #ccd7e4;
+  border-radius: 6px;
+  background: #fff;
+  color: #324255;
+  font-size: 13px;
+}
+.award-edit-row .award-level-select:disabled {
+  opacity: 0.6;
+}
+.award-edit-row .button {
+  margin-left: 0;
 }
 .award-import {
   border: 1px dashed var(--line);
