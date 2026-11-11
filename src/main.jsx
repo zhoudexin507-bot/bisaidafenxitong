@@ -11,6 +11,7 @@ import {
   ChevronRight,
   ClipboardList,
   Clock3,
+  Download,
   ExternalLink,
   FileCheck2,
   Flag,
@@ -36,7 +37,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { resultPages, resultViews } from "../shared/slides.js";
+import { resultPages } from "../shared/slides.js";
 import "./styles.css";
 import "./stages.css";
 import { LiveDesk, StageControls, StageCover } from "./live-desk.jsx";
@@ -381,6 +382,10 @@ function ScorePanel({ project, data, onRevealChange }) {
   const count = data.judges.length;
   const rows = count <= 5 ? 1 : count <= 12 ? 2 : Math.max(3, Math.ceil(count / 10));
   const columns = Math.max(1, Math.ceil(count / rows));
+  const seatRows = Array.from(
+    { length: Math.ceil(count / columns) },
+    (_, r) => data.judges.slice(r * columns, (r + 1) * columns),
+  );
   const scoresByJudge = new Map(project.scores.map((score) => [score.judge_id, score]));
   useEffect(() => {
     setAnimation({ key: signature, step: 0 });
@@ -474,45 +479,50 @@ function ScorePanel({ project, data, onRevealChange }) {
         </div>
       )}
       <div className="judge-scores">
-        {data.judges.map((j, i) => {
-          const score = scoresByJudge.get(j.id),
-            low = project.result.droppedLow?.includes(j.id),
-            high = project.result.droppedHigh?.includes(j.id),
-            drop = low || high;
-          return (
-            <div
-              key={j.id}
-              className={`judge-score ${score ? "submitted" : ""} ${complete && step >= 1 && drop ? "extreme" : ""} ${complete && step >= 2 && drop ? "excluded" : ""}`}
-            >
-              <div className="judge-seat">
-                <span>评委</span>{" "}
-                <b>{String(j.number || i + 1).padStart(2, "0")}</b>
-              </div>
-              {complete ? (
-                <>
-                  <strong className="judge-value" style={{ "--delay": Math.min(i * 40, 1160) + "ms" }}>{fmt(score?.total / 100)}</strong>
-                  {step >= 1 && drop && (
-                    <small>{high ? "最高分" : "最低分"}{step >= 2 && "已剔除"}</small>
-                  )}
-                </>
-              ) : (
-                <strong className="submission-state">
-                  {score ? (
+        {seatRows.map((row, r) => (
+          <div className="judge-row" key={r}>
+            {row.map((j, c) => {
+              const i = r * columns + c;
+              const score = scoresByJudge.get(j.id),
+                low = project.result.droppedLow?.includes(j.id),
+                high = project.result.droppedHigh?.includes(j.id),
+                drop = low || high;
+              return (
+                <div
+                  key={j.id}
+                  className={`judge-score ${score ? "submitted" : ""} ${complete && step >= 1 && drop ? "extreme" : ""} ${complete && step >= 2 && drop ? "excluded" : ""}`}
+                >
+                  <div className="judge-seat">
+                    <span>评委</span>{" "}
+                    <b>{String(j.number || i + 1).padStart(2, "0")}</b>
+                  </div>
+                  {complete ? (
                     <>
-                      <CheckCircle2 size={22} />
-                      已打分
+                      <strong className="judge-value" style={{ "--delay": Math.min(i * 40, 1160) + "ms" }}>{fmt(score?.total / 100)}</strong>
+                      {step >= 1 && drop && (
+                        <small>{high ? "最高分" : "最低分"}{step >= 2 && "已剔除"}</small>
+                      )}
                     </>
                   ) : (
-                    <>
-                      <Clock3 size={22} />
-                      {ready ? "待开始" : "未打分"}
-                    </>
+                    <strong className="submission-state">
+                      {score ? (
+                        <>
+                          <CheckCircle2 size={22} />
+                          已打分
+                        </>
+                      ) : (
+                        <>
+                          <Clock3 size={22} />
+                          {ready ? "待开始" : "未打分"}
+                        </>
+                      )}
+                    </strong>
                   )}
-                </strong>
-              )}
-            </div>
-          );
-        })}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -958,6 +968,7 @@ function Ranking({ data, act }) {
   return (
     <>
       <PageTitle title="比赛成绩">
+        {data.settings.mode === "test" && <Badge status="open">测试分排名</Badge>}
         <Badge status={data.settings.status === "final" ? "closed" : "open"}>
           {data.settings.status === "final" ? "最终成绩" : "未发布"}
         </Badge>
@@ -1053,9 +1064,8 @@ const backgroundKinds = [
   ["awards", "排名与颁奖"],
 ];
 
-function BackgroundSettings({ data, refresh, act }) {
+function BackgroundSettings({ data, refresh }) {
   const [busy, setBusy] = useState(null);
-  const [pendingTitle, setPendingTitle] = useState(null);
   const [error, setError] = useState(null);
   const backgrounds = data.backgrounds || {};
   async function send(kind, method, file) {
@@ -1083,7 +1093,7 @@ function BackgroundSettings({ data, refresh, act }) {
     <section className="panel display-control background-settings">
       <h2>背景图片</h2>
       <p className="table-sub">
-        建议使用 16:9 图片，每张不超过 10 MB。排名、团体奖和个人奖共用一张颁奖背景图。
+        建议使用 16:9 图片，每张不超过 10 MB。排名、团体奖和个人奖共用一张颁奖背景图；背景图自带赛事文字时，可在排版预览中关闭系统标题。
       </p>
       {backgroundKinds.map(([kind, label]) => {
         const version = backgrounds[kind];
@@ -1134,16 +1144,6 @@ function BackgroundSettings({ data, refresh, act }) {
           </div>
         );
       })}
-      <label className="home-title-toggle"><input type="checkbox" disabled={pendingTitle !== null}
-        checked={pendingTitle ?? (data.settings.showHomeTitle !== false)}
-        onChange={async e => {
-          const showHomeTitle = e.target.checked;
-          setPendingTitle(showHomeTitle);
-          try { await act("/admin/display-options", "PUT", { showHomeTitle }); }
-          catch (reason) { setError(reason); }
-          finally { setPendingTitle(null); }
-        }} />
-        背景首页显示系统标题和副标题</label>
       <ErrorBox error={error} />
     </section>
   );
@@ -1157,9 +1157,6 @@ function PresentationControls({ data, act, refresh }) {
     data.projects.find((p) => ["ready", "open"].includes(p.status)) ||
     data.projects[0];
   const final = data.settings.status === "final";
-  const view = presentation.view;
-  const stages = resultViews(data);
-  const nextView = stages[stages.indexOf(view) + 1];
   return (
     <div className="display-page">
       <PageTitle title="大屏控制">
@@ -1251,36 +1248,7 @@ function PresentationControls({ data, act, refresh }) {
               )}
             </section>
           )}
-            <section className="panel display-control">
-              <h2 className="display-section-title">排名与颁奖投屏</h2>
-              {!final && <p className="table-sub">发布最终成绩后可切换现场画面。赛前可在排版预览中调整文字。</p>}
-              <div className="result-tabs">
-                {displayViews.map(([id, label]) => (
-                  <Button
-                    key={id}
-                    disabled={!final}
-                    kind={id === view && data.settings.stage.scene === "live" ? "primary" : ""}
-                    onClick={() => act("/admin/presentation", "POST", { view: id })}
-                  >
-                    {label}
-                  </Button>
-                ))}
-              </div>
-              {final && nextView && (
-                <Button
-                  kind="primary"
-                  icon={ArrowRight}
-                  onClick={() =>
-                    act("/admin/presentation", "POST", {
-                      view: nextView,
-                    })
-                  }
-                >
-                  下一步：{displayViews.find(([id]) => id === nextView)?.[1]}
-                </Button>
-              )}
-            </section>
-          <BackgroundSettings data={data} refresh={refresh} act={act} />
+          <BackgroundSettings data={data} refresh={refresh} />
         </div>
         <div className="display-preview">
           <div className="preview-heading">
@@ -2649,8 +2617,148 @@ function Logs({ data }) {
   );
 }
 
+// —— 评委二维码纯净图导出：canvas 合成「二维码 + 席位标签」，打包为 ZIP ——
+// 图片仅白底、二维码与一行席位信息，不含打印版说明文字，便于发送或自行排版。
+function crc32(bytes) {
+  if (!crc32.table) {
+    crc32.table = new Int32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      crc32.table[n] = c;
+    }
+  }
+  let crc = -1;
+  for (const byte of bytes) crc = (crc >>> 8) ^ crc32.table[(crc ^ byte) & 0xff];
+  return (crc ^ -1) >>> 0;
+}
+
+// 无压缩（store）ZIP：二维码 PNG 本就很小，免引第三方打包库。
+// 文件名置 UTF-8 标志位，现代解压器均可正确显示中文名。
+function zipStore(files) {
+  const encoder = new TextEncoder();
+  const local = [],
+    central = [];
+  let offset = 0;
+  const now = new Date();
+  const time =
+    (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  const date =
+    ((now.getFullYear() - 1980) << 9) |
+    ((now.getMonth() + 1) << 5) |
+    now.getDate();
+  for (const file of files) {
+    const name = encoder.encode(file.name),
+      size = file.bytes.length,
+      crc = crc32(file.bytes);
+    const header = new DataView(new ArrayBuffer(30));
+    header.setUint32(0, 0x04034b50, true);
+    header.setUint16(4, 20, true); // version needed
+    header.setUint16(6, 0x0800, true); // UTF-8 file names
+    header.setUint16(10, time, true);
+    header.setUint16(12, date, true);
+    header.setUint32(14, crc, true);
+    header.setUint32(18, size, true);
+    header.setUint32(22, size, true);
+    header.setUint16(26, name.length, true);
+    local.push(new Uint8Array(header.buffer), name, file.bytes);
+    const entry = new DataView(new ArrayBuffer(46));
+    entry.setUint32(0, 0x02014b50, true);
+    entry.setUint16(4, 20, true);
+    entry.setUint16(6, 20, true);
+    entry.setUint16(8, 0x0800, true);
+    entry.setUint16(12, time, true);
+    entry.setUint16(14, date, true);
+    entry.setUint32(16, crc, true);
+    entry.setUint32(20, size, true);
+    entry.setUint32(24, size, true);
+    entry.setUint16(28, name.length, true);
+    entry.setUint32(42, offset, true);
+    central.push(new Uint8Array(entry.buffer), name);
+    offset += 30 + name.length + size;
+  }
+  const centralSize = central.reduce((n, part) => n + part.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, files.length, true);
+  end.setUint16(10, files.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...local, ...central, new Uint8Array(end.buffer)], {
+    type: "application/zip",
+  });
+}
+
+// 取服务端 SVG 二维码，经 data: URL（受 CSP 许可）绘入 canvas 并加席位标签
+async function qrImageBytes(judge, label) {
+  const response = await fetch(
+    `/api/admin/judges/${judge.id}/qr?v=${judge.token_version}`,
+  );
+  if (!response.ok) throw new Error("获取二维码失败，请刷新后重试");
+  const image = new Image();
+  image.src =
+    "data:image/svg+xml;charset=utf-8," +
+    encodeURIComponent(await response.text());
+  await image.decode();
+  const width = 640,
+    qr = 544,
+    pad = (width - qr) / 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = pad + qr + 72;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, width, canvas.height);
+  context.drawImage(image, pad, pad, qr, qr);
+  context.fillStyle = "#111827";
+  context.font =
+    '600 34px "Manrope Variable", "PingFang SC", "Microsoft YaHei", sans-serif';
+  context.textAlign = "center";
+  context.textBaseline = "top";
+  context.fillText(label, width / 2, pad + qr + 22, width - 32);
+  const blob = await new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (value) => (value ? resolve(value) : reject(new Error("生成二维码图片失败"))),
+      "image/png",
+    ),
+  );
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 function PrintJudges({ data }) {
   const [single, setSingle] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
+  async function exportZip() {
+    if (exporting || !data.judges.length) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const files = [];
+      for (let i = 0; i < data.judges.length; i++) {
+        const judge = data.judges[i],
+          number = String(i + 1).padStart(2, "0");
+        // 未改名的默认席位名（评委 01）不再重复展示
+        const label = /^评委\s*\d+$/.test(judge.name)
+          ? `评委席 ${number}`
+          : `评委席 ${number} · ${judge.name}`;
+        files.push({
+          name: `${number}-${judge.name.replace(/[\\/:*?"<>|]/g, "_")}.png`,
+          bytes: await qrImageBytes(judge, label),
+        });
+      }
+      const url = URL.createObjectURL(zipStore(files));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "评委评分二维码.zip";
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (error) {
+      setExportError(error);
+    } finally {
+      setExporting(false);
+    }
+  }
   return (
     <div className="print-page">
       <div className="print-toolbar">
@@ -2671,13 +2779,18 @@ function PrintJudges({ data }) {
             单页单码
           </Button>
         </div>
+        <Button icon={Download} onClick={exportZip} disabled={exporting}>
+          {exporting ? "正在生成…" : "导出图片 ZIP"}
+        </Button>
         <Button icon={Printer} onClick={() => print()}>
           打印全部二维码
         </Button>
         <a href="/admin/judges">返回评委管理</a>
       </div>
+      {exportError && <ErrorBox error={exportError} />}
       <p className="no-print">
-        每张二维码对应一位评委，请分别发放。纸张选 A4，关闭浏览器页眉页脚。
+        每张二维码对应一位评委，请分别发放。纸张选 A4，关闭浏览器页眉页脚。「导出图片
+        ZIP」生成纯净版：白底二维码 + 席位标签，无打印排版，便于线上发送或自行排版。
         {single
           ? "当前为单页单码：一位评委一张 A4，便于逐个发放。"
           : "当前为多码一页：一页两张席位卡。"}
@@ -2982,8 +3095,13 @@ function PresenterControls({ data, current, revealed, page, refresh }) {
   const manual = data.settings.presentation.manual;
   const waitingReveal = next.waitForReveal && !revealed;
   const disabled = busy || !manual || !next.enabled || waitingReveal;
+  // 正式发布后与测试收官预演中均可回看颁奖页面
+  const reviewing =
+    data.settings.status === "final" ||
+    (data.settings.mode === "test" &&
+      data.settings.presentation.view !== "project");
   const canBack =
-    data.settings.status === "final" &&
+    reviewing &&
     (page > 0 ||
       ["teamAwards", "individualAwards"].includes(
         data.settings.presentation.view,
@@ -3299,13 +3417,16 @@ function Screen({ data, connected, presenter = false, refresh }) {
       className={`${board ? "projection-screen" : "screen-page stage-view"} stage-${view} stage-scene-${data.settings.stage?.scene || "live"} ${presenter ? "presenter-screen" : ""}`}
     >
       {board ? <>
+        {data.settings.mode === "test" && <div className="projection-badge">测试预演</div>}
         <ProjectionBoard data={data} view={board} records={records} page={page} pages={pages} ResultsView={ResultsView} />
         {!connected && <div className="projection-connection"><Connection connected={false} /></div>}
       </> : <>
       <header>
         <div className="screen-event">{data.settings.title}</div>
         <div className="screen-tools">
-          {!covered && view === "project" && data.settings.mode === "test" && <span>测试评分</span>}
+          {!covered && data.settings.mode === "test" && (
+            <span>{view === "project" ? "测试评分" : "测试预演"}</span>
+          )}
           {!connected && <Connection connected={false} />}
         </div>
       </header>

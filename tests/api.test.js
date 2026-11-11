@@ -95,9 +95,13 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
       await ok(`/admin/projects/${p[0].id}/status`, "POST", { status: "open" });
       const stale = await f.body(ts[0], p[0].id, 50);
       await f.complete(p[0].id, [10, 20, 30]);
-      assert.equal((await state()).ranking.length, 0);
+      // 测试阶段管理端排名按测试分展示（收官预演的数据源），公共接口仍隐藏
+      assert.equal((await state()).ranking.length, 1);
+      assert.equal((await request("/state")).data.ranking.length, 0);
       await ok("/admin/test/finish");
       assert.equal((await state()).projects[0].scores.length, 0);
+      // 完成测试后回到正式口径：测试分不进入正式排名
+      assert.equal((await state()).ranking.length, 0);
       await ok("/admin/status", "POST", { status: "running" });
       await ok(`/admin/projects/${p[0].id}/status`, "POST", {
         status: "ready",
@@ -341,4 +345,86 @@ test("configured rehearsal, two rounds, fixed awards, persistence and security",
       assert.equal((await request("/admin/state")).status, 401);
     },
   );
+});
+
+test("login rate limit locks out repeated failures", async (t) => {
+  const f = await fixture(t);
+  for (let i = 0; i < 15; i++)
+    assert.equal(
+      (await f.request("/login", "POST", { password: `wrong-${i}` })).status,
+      401,
+    );
+  // 第 16 次即使密码正确也被限流；成功登录本就不计入配额
+  assert.equal(
+    (await f.request("/login", "POST", { password: f.config.adminPassword }))
+      .status,
+    429,
+  );
+});
+
+test("write endpoints reject untrusted origins beyond login", async (t) => {
+  const f = await fixture(t);
+  await f.login();
+  await f.configure();
+  const evil = { Origin: "https://evil.example" };
+  const d = await f.state(),
+    ts = await f.tokens();
+  assert.equal(
+    (
+      await f.request(
+        "/admin/settings",
+        "PUT",
+        { ...d.settings, title: "篡改" },
+        undefined,
+        evil,
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (await f.request("/admin/test/start", "POST", {}, undefined, evil)).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.request(
+        "/judge/scores",
+        "POST",
+        { projectId: d.projects[0].id, score: 1 },
+        ts[0],
+        evil,
+      )
+    ).status,
+    403,
+  );
+  // 同源写请求不受影响
+  assert.equal(
+    (await f.request("/admin/prizes", "PUT", { prizes: [1, 1, 0] })).status,
+    200,
+  );
+});
+
+test("stale epoch submissions are rejected with a valid token", async (t) => {
+  const f = await fixture(t);
+  await f.login();
+  await f.configure();
+  const d = await f.state(),
+    ts = await f.tokens();
+  await f.ok("/admin/test/start");
+  await f.ok(`/admin/projects/${d.projects[0].id}/status`, "POST", {
+    status: "open",
+  });
+  // 测试阶段的请求体：完成测试后 epoch 递增，phase/round 都改为正确仍应被拒
+  const body = await f.body(ts[0], d.projects[0].id, 80);
+  await f.complete(d.projects[0].id);
+  await f.ok("/admin/test/finish");
+  await f.ok("/admin/status", "POST", { status: "running" });
+  await f.ok(`/admin/projects/${d.projects[0].id}/status`, "POST", {
+    status: "open",
+  });
+  const stale = { ...body, phase: "official" };
+  const rejected = await f.request("/judge/scores", "POST", stale, ts[0]);
+  assert.equal(rejected.status, 409);
+  assert.match(rejected.data.error, /赛程已更新/);
+  assert.equal((await f.submit(ts[0], d.projects[0].id, 80)).status, 201);
 });

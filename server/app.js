@@ -307,8 +307,12 @@ export function createApp(config) {
       ),
       judges,
       projects,
+      // 测试阶段排名按测试分计算，供收官预演与同分裁定；正式阶段不变。
       ranking: rankProjects(
-        projects.map((p) => ({ ...p, result: p.overall })),
+        projects.map((p) => ({
+          ...p,
+          result: settings.mode === "test" ? p.result : p.overall,
+        })),
         settings,
       ),
       awards: db.prepare("SELECT * FROM awards ORDER BY rowid").all(),
@@ -344,6 +348,11 @@ export function createApp(config) {
   });
   function publicSnapshot() {
     const data = snapshot();
+    // 收官画面（排名/颁奖）在正式发布后，或测试阶段收官预演中对外可见
+    const ceremony =
+      data.settings.status === "final" ||
+      (data.settings.mode === "test" &&
+        data.settings.presentation.view !== "project");
     const chosen =
       data.projects.find(
         (p) => p.id === data.settings.presentation.projectId,
@@ -370,7 +379,7 @@ export function createApp(config) {
         )
       : [];
     data.ranking =
-      data.settings.status === "final" &&
+      ceremony &&
       ["ranking", "teamAwards"].includes(data.settings.presentation.view)
         ? data.ranking.map(
             ({ id, name, team, members, rank, prize, result }) => ({
@@ -385,8 +394,7 @@ export function createApp(config) {
           )
         : [];
     data.awards =
-      data.settings.status === "final" &&
-      data.settings.presentation.view === "individualAwards"
+      ceremony && data.settings.presentation.view === "individualAwards"
         ? data.awards
         : [];
     delete data.settings.releasedScores;
@@ -477,7 +485,7 @@ export function createApp(config) {
           }
           case "startTest":
             db.exec(
-              "DELETE FROM entries WHERE phase='test'; DELETE FROM revisions WHERE phase='test'; UPDATE projects SET status='pending'",
+              "DELETE FROM entries WHERE phase='test'; DELETE FROM revisions WHERE phase='test'; UPDATE projects SET status='pending',tie_order=NULL",
             );
             updated = {
               ...updated,
@@ -489,8 +497,14 @@ export function createApp(config) {
             };
             ready(data.projects[0].id);
             break;
+          case "publishTest":
+            // 测试收官预演：封存末队并展示测试分排名，不改比赛状态、不锁定任何内容
+            if (data.projects.some((p) => !p.result.complete))
+              fail(409, "请先完成全部测试评分");
+            show("ranking");
+            break;
           case "finishTest":
-            db.exec("UPDATE projects SET status='pending'");
+            db.exec("UPDATE projects SET status='pending',tie_order=NULL");
             updated = {
               ...updated,
               mode: "official",
@@ -553,7 +567,12 @@ export function createApp(config) {
       { data, key: currentKey } = presenterState(),
       s = data.settings;
     if (key !== currentKey) fail(409, "演示状态已更新，请按当前页面继续");
-    if (s.status !== "final") fail(409, "评分阶段不能倒退");
+    // 测试收官预演与正式发布后都允许回看颁奖页面
+    if (
+      s.status !== "final" &&
+      !(s.mode === "test" && s.presentation.view !== "project")
+    )
+      fail(409, "评分阶段不能倒退");
     const views = resultViews(data);
     let view = s.presentation.view,
       page = s.presentation.page || 0;
@@ -646,7 +665,7 @@ export function createApp(config) {
     }),
   );
   app.put("/api/admin/display-options", admin, (req, res) => {
-    const options = z.object({ showTeamNumber: z.boolean(), showHomeTitle: z.boolean() })
+    const options = z.object({ showTeamNumber: z.boolean() })
       .partial().strict().refine(v => Object.keys(v).length > 0).parse(req.body);
     changed("管理员", "设置大屏文字显示", options, () =>
       saveSettings(db, { ...getSettings(db), ...options }));
@@ -661,6 +680,7 @@ export function createApp(config) {
       x: z.number().int().min(1).max(99),
       y: z.number().int().min(1).max(99),
       color: z.string().regex(/^#[0-9a-f]{6}$/i),
+      hidden: z.boolean().optional(),
     }).strict().parse(req.body);
     changed("管理员", "保存大屏文字排版", { view, layer, ...style }, () => {
       const settings = getSettings(db);
@@ -884,7 +904,7 @@ export function createApp(config) {
     const s = getSettings(db);
     changed("管理员", "开始测试评分", {}, () => {
       db.exec(
-        "DELETE FROM entries WHERE phase='test'; DELETE FROM revisions WHERE phase='test'; UPDATE projects SET status='pending'",
+        "DELETE FROM entries WHERE phase='test'; DELETE FROM revisions WHERE phase='test'; UPDATE projects SET status='pending',tie_order=NULL",
       );
       saveSettings(db, {
         ...s,
@@ -903,7 +923,7 @@ export function createApp(config) {
     if (s.mode !== "test" || s.status !== "running")
       fail(409, "当前不在测试评分阶段");
     changed("管理员", "完成测试评分", {}, () => {
-      db.exec("UPDATE projects SET status='pending'");
+      db.exec("UPDATE projects SET status='pending',tie_order=NULL");
       saveSettings(db, {
         ...s,
         mode: "official",
@@ -1021,8 +1041,12 @@ export function createApp(config) {
       })
       .parse(req.body);
     const settings = getSettings(db);
-    if (presentation.view !== "project" && settings.status !== "final")
-      fail(409, "请先收齐并发布全部成绩");
+    // 正式发布后可切颁奖画面；测试阶段收齐全部测试分后也可切（收官预演）
+    const testCeremonyReady =
+      settings.mode === "test" &&
+      snapshot().projects.every((p) => p.result.complete);
+    if (presentation.view !== "project" && settings.status !== "final" && !testCeremonyReady)
+      fail(409, settings.mode === "test" ? "请先收齐全部测试评分" : "请先收齐并发布全部成绩");
     if (presentation.view === "project") {
       if (!presentation.projectId) fail(400, "请选择展示队伍");
       findProject(presentation.projectId);

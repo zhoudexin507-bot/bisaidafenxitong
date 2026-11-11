@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { CheckCircle2, Circle, Clock3, ExternalLink, Monitor, Pause, Play, RotateCw, Users } from "lucide-react";
+import { ArrowRight, CheckCircle2, Circle, Clock3, ExternalLink, Monitor, Pause, Play, RotateCw, Users } from "lucide-react";
+import { resultViews } from "../shared/slides.js";
 import "./live-desk.css";
 
 export function StageClock({ stage, serverTime }) {
@@ -49,15 +50,69 @@ export function StageControls({ data, act }) {
     catch { /* The shared action notice reports the server error. */ }
     finally { setBusy(false); }
   }
+  async function showView(view, projectId) {
+    if (busy) return;
+    setBusy(true);
+    try { await act("/admin/presentation", "POST", projectId ? { view, projectId } : { view }); }
+    catch { /* The shared action notice reports the server error. */ }
+    finally { setBusy(false); }
+  }
+  const final = data.settings.status === "final";
+  // 测试阶段全部收齐后同样可切排名与颁奖画面（收官预演）
+  const testCeremonyReady =
+    data.settings.mode === "test" && data.projects.every((p) => p.result.complete);
+  const awardsReady = final || testCeremonyReady;
+  const live = stage.scene === "live";
+  const view = data.settings.presentation.view;
+  const showingProject = live && view === "project";
+  // “比赛画面”同时收 scene 与展示页：从颁奖页返回时恢复当前队伍计分板。
+  async function backToLive() {
+    const project = data.projects.find((p) => p.id === data.settings.presentation.projectId)
+      || data.projects.find((p) => ["ready", "open"].includes(p.status))
+      || data.projects[0];
+    if (!live) await send({ action: "scene", scene: "live", message: "", seconds: 0 });
+    if (data.settings.presentation.view !== "project" && project)
+      await showView("project", project.id);
+  }
+  const awardViews = [["ranking", "得分排名"], ["teamAwards", "团体奖项"], ["individualAwards", "个人奖项"]];
+  const nextView = awardsReady
+    ? resultViews(data)[resultViews(data).indexOf(view) + 1]
+    : undefined;
   const validMinutes = minutes !== "" && Number.isFinite(Number(minutes)) && Number(minutes) >= 0 && Number(minutes) <= 120;
   return <section className="director-tools" aria-labelledby="stage-control-title">
     <div className="desk-heading"><h2 id="stage-control-title">现场画面</h2>
       <span>切换后立即生效</span>
     </div>
-    <div className="scene-switch" role="group" aria-label="大屏场景">
-      {[["live", "比赛画面"], ["home", "背景首页"], ["standby", "开场候场"], ["break", "中场休息"]].map(([scene, label]) =>
-        <button key={scene} className={`button ${stage.scene === scene ? "primary" : ""}`} aria-pressed={stage.scene === scene}
-          disabled={busy || stage.scene === scene || (!["live", "home"].includes(scene) && !validMinutes)} onClick={() => send({ action: "scene", scene, message: ["live", "home"].includes(scene) ? "" : message, seconds: ["live", "home"].includes(scene) ? 0 : Math.round(Number(minutes) * 60) })}>{label}</button>)}
+    <div className="scene-group">
+      <span className="scene-group-label">大屏场景</span>
+      <div className="scene-switch" role="group" aria-label="大屏场景">
+        {[["live", "比赛画面"], ["home", "背景首页"], ["standby", "开场候场"], ["break", "中场休息"]].map(([scene, label]) => {
+          const pressed = scene === "live" ? showingProject : stage.scene === scene;
+          const timed = !["live", "home"].includes(scene);
+          return <button key={scene} className={`button ${pressed ? "primary" : ""}`} aria-pressed={pressed}
+            disabled={busy || pressed || (timed && !validMinutes)}
+            onClick={() => scene === "live"
+              ? backToLive()
+              : send({ action: "scene", scene, message: timed ? message : "", seconds: timed ? Math.round(Number(minutes) * 60) : 0 })}>{label}</button>;
+        })}
+      </div>
+    </div>
+    <div className="scene-group scene-group-awards">
+      <span className="scene-group-label">
+        {final
+          ? "排名与颁奖"
+          : testCeremonyReady
+            ? "排名与颁奖 · 测试预演"
+            : "排名与颁奖 · 发布后可用"}
+      </span>
+      <div className="scene-switch" role="group" aria-label="排名与颁奖投屏">
+        {awardViews.map(([id, label]) =>
+          <button key={id} className={`button ${live && view === id ? "primary" : ""}`} aria-pressed={live && view === id}
+            disabled={busy || !awardsReady} onClick={() => showView(id)}>{label}</button>)}
+      </div>
+      {awardsReady && nextView && <button className="button primary scene-next" disabled={busy} onClick={() => showView(nextView)}>
+        <ArrowRight size={15} />下一步：{awardViews.find(([id]) => id === nextView)?.[1]}
+      </button>}
     </div>
     <div className="stage-inputs">
       <label className="field"><span>候场 / 休息提示</span><input maxLength={100} value={message} placeholder="例如：请评委就座，比赛即将开始" onChange={(e) => setMessage(e.target.value)} /></label>

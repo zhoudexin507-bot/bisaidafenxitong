@@ -85,6 +85,26 @@ export function openDatabase(path) {
       db.prepare("INSERT INTO migrations VALUES ('rounds-v1')").run();
     });
   }
+  // The old "hide home title" checkbox becomes per-layer visibility flags.
+  if (!db.prepare("SELECT 1 FROM migrations WHERE name='display-hide-v1'").get()) {
+    transaction(db, () => {
+      const settings = JSON.parse(
+        db.prepare("SELECT value FROM settings WHERE id=1").get().value,
+      );
+      if (settings.showHomeTitle === false) {
+        const layouts = settings.displayLayouts || {};
+        const home = layouts.home || {};
+        saveSettings(db, { ...defaultSettings, ...settings, displayLayouts: {
+          ...layouts, home: {
+            ...home,
+            title: { ...home.title, hidden: true },
+            subtitle: { ...home.subtitle, hidden: true },
+          },
+        } });
+      }
+      db.prepare("INSERT OR IGNORE INTO migrations VALUES ('display-hide-v1')").run();
+    });
+  }
   return db;
 }
 

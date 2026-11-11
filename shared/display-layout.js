@@ -1,5 +1,5 @@
 const text = (label, size, y, color = "#ffffff") => ({
-  label, size, x: 50, y, color,
+  label, size, x: 50, y, color, hidden: false,
 });
 
 const resultText = {

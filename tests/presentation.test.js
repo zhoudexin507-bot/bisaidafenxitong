@@ -182,3 +182,109 @@ test("个人奖保持录入顺序，每六人一页", () => {
   const awards = Array.from({ length: 8 }, (_, i) => i);
   assert.deepEqual(resultPages({ awards }, "individualAwards"), [[0, 1, 2, 3, 4, 5], [6, 7]]);
 });
+
+test("test phase previews the full award ceremony without touching official results", async (t) => {
+  const f = await fixture(t);
+  await f.login();
+  await f.configure({ rounds: 1 });
+  const state = async () => (await f.request("/admin/presenter/state")).data;
+  async function next(type) {
+    const s = await state();
+    assert.equal(s.presenter.next.type, type);
+    await f.ok("/admin/presenter/next", "POST", { key: s.presenter.next.key });
+  }
+  await f.ok("/admin/presenter/start");
+  await next("startTest");
+  // 第 1 队收齐后仍是“提前结束”入口；公共接口与手动切视图都保持关闭
+  let p = (await state()).projects[0];
+  await next("open");
+  await f.complete(p.id, [80, 90, 100]);
+  assert.equal((await state()).presenter.next.type, "finishTest");
+  assert.equal((await f.request("/state")).data.ranking.length, 0);
+  assert.equal(
+    (
+      await f.request("/admin/presentation", "POST", { view: "ranking" })
+    ).status,
+    409,
+  );
+  // 控制台推进第 2 队（与现场彩排操作一致），打相同分数制造精确同分
+  await f.ok(`/admin/projects/${p.id}/status`, "POST", { status: "closed" });
+  const second = (await f.state()).projects[1];
+  await f.ok(`/admin/projects/${second.id}/status`, "POST", { status: "open" });
+  await f.complete(second.id, [80, 90, 100]);
+  // 全部收齐：出现同分裁定步骤，直接推进被拒，须先裁定
+  const tie = await state();
+  assert.equal(tie.presenter.next.type, "tie");
+  assert.equal(tie.presenter.ties.length, 2);
+  assert.equal(
+    (
+      await f.request("/admin/presenter/next", "POST", {
+        key: tie.presenter.next.key,
+      })
+    ).status,
+    409,
+  );
+  // 收齐后大屏控制可手动切排名（收官预演入口）
+  await f.ok("/admin/presentation", "POST", { view: "ranking" });
+  let public1 = (await f.request("/state")).data;
+  assert.equal(public1.ranking.length, 2);
+  assert.equal(public1.settings.presentation.view, "ranking");
+  await f.ok("/admin/presentation", "POST", { view: "project", projectId: p.id });
+  await f.ok("/admin/tiebreak", "POST", {
+    projectIds: (await f.state()).projects.map((x) => x.id),
+    reason: "彩排自动裁定",
+  });
+  // 进入预演：封存末队、展示测试排名；比赛状态保持进行中
+  await next("publishTest");
+  let s = await state();
+  assert.equal(s.settings.status, "running");
+  assert.equal(s.settings.mode, "test");
+  assert.equal(s.settings.presentation.view, "ranking");
+  assert.deepEqual(
+    s.ranking.map((x) => x.result.average),
+    [90, 90],
+  );
+  const public2 = (await f.request("/state")).data;
+  assert.equal(public2.ranking.length, 2);
+  assert.ok(public2.ranking.every((x) => x.prize));
+  // 排名 → 团体奖项（两奖级各一页）→ 个人奖项 → 完成测试
+  await next("view");
+  assert.equal(s0((await state())).view, "teamAwards");
+  await next("view");
+  assert.equal(s0((await state())).page, 1);
+  await next("view");
+  assert.equal(s0((await state())).view, "individualAwards");
+  // 预演中允许回看
+  await f.ok("/admin/presenter/previous", "POST", {
+    key: (await state()).presenter.next.key,
+  });
+  assert.equal(s0(await state()).view, "teamAwards");
+  await next("view");
+  await next("finishTest");
+  // 回到筹备：测试分保留在隔离账，正式排名与 tie_order 全部归零
+  s = await state();
+  assert.equal(s.settings.status, "draft");
+  assert.equal(s.settings.mode, "official");
+  assert.equal(s.ranking.length, 0);
+  assert.equal(
+    f.service.db
+      .prepare("SELECT COUNT(*) n FROM projects WHERE tie_order IS NOT NULL")
+      .get().n,
+    0,
+  );
+  assert.equal(
+    f.service.db
+      .prepare("SELECT COUNT(*) n FROM entries WHERE phase='test'")
+      .get().n,
+    6,
+  );
+  assert.equal(
+    f.service.db
+      .prepare("SELECT COUNT(*) n FROM entries WHERE phase='official'")
+      .get().n,
+    0,
+  );
+  function s0(snapshot) {
+    return snapshot.settings.presentation;
+  }
+});

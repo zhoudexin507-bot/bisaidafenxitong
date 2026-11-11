@@ -25,6 +25,11 @@
 .next-cue a { display: flex; align-items: center; gap: 6px; }
 .scene-switch { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 24px; }
 .scene-switch .button { min-width: 120px; justify-content: center; }
+.scene-group { margin-bottom: 24px; }
+.scene-group .scene-switch { margin-bottom: 0; }
+.scene-group-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.scene-group-awards { padding-top: 16px; border-top: 1px solid var(--line); }
+.scene-next { margin-top: 10px; width: 100%; }
 .stage-inputs { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 20px; margin-bottom: 18px; }
 .stage-inputs .field { min-width: 0; }
 .timer-field-error { color: #a13737; font-size: 13px; }

@@ -8,3 +8,10 @@ playwright-report/
 .impeccable/
 .workbuddy/
 artifacts/
+
+# local tooling / temp
+.tmp/
+.zcode/
+.remote-err.txt
+.remote-norm.txt
+.to-upload.txt

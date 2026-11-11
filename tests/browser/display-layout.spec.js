@@ -22,7 +22,13 @@ test("home title switch, private layout preview and published results use the sa
     await admin.getByRole("button", { name: "背景首页", exact: true }).click();
     await screen.goto(base + "/screen");
     await expect(screen.locator(".board-home h1")).toHaveText("投屏验收");
-    await admin.getByLabel("背景首页显示系统标题和副标题").uncheck();
+    await admin.getByRole("button", { name: "排版预览", exact: true }).click();
+    for (const layer of ["赛事名称", "赛事副标题"]) {
+      await admin.locator(".layout-form").getByRole("button", { name: layer, exact: true }).click();
+      await admin.getByLabel("显示此文字项").uncheck();
+      await admin.getByRole("button", { name: "保存此文字项" }).click();
+      await expect(admin.getByRole("button", { name: "保存此文字项" })).toBeDisabled();
+    }
     await expect(screen.locator(".board-home")).toBeVisible();
     await expect(screen.locator(".board-home")).toHaveText("");
     await expect(screen.locator(".board-home")).toHaveCSS("background-image", /backgrounds\/home/);
@@ -30,8 +36,7 @@ test("home title switch, private layout preview and published results use the sa
     const rect = await screen.locator(".board-home").boundingBox();
     expect(rect.width / rect.height).toBeCloseTo(16 / 9, 2);
     await screen.setViewportSize({ width: 1920, height: 1080 });
-    await admin.getByRole("button", { name: "排版预览", exact: true }).click();
-    await admin.getByLabel("预览画面").selectOption("ranking");
+    await admin.locator(".layout-pickers").getByRole("button", { name: "得分排名" }).click();
     await expect(admin.getByText("赛前排版使用示例数据")).toBeVisible();
     await admin.getByLabel("字号（1920px 画布）").fill("80");
     await admin.getByLabel("水平位置（%）").fill("29");
@@ -39,6 +44,7 @@ test("home title switch, private layout preview and published results use the sa
     await admin.getByLabel("文字颜色").fill("#eec144");
     await admin.getByRole("button", { name: "保存此文字项" }).click();
     await expect(admin.getByRole("button", { name: "保存此文字项" })).toBeDisabled();
+    await admin.getByRole("button", { name: "返回现场预览", exact: true }).click();
     await expect(screen.locator(".board-home")).toHaveText("");
     await f.rehearse();
     const d = await f.state(), project = d.projects[0];

@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { createApp } from "../../server/app.js";
 
 const pdfPages = (buffer) =>
@@ -32,6 +33,7 @@ test("judge QR print pages support grid and single-per-page modes", async ({
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     reducedMotion: "reduce",
+    acceptDownloads: true,
   });
   const page = await context.newPage();
   try {
@@ -79,6 +81,26 @@ test("judge QR print pages support grid and single-per-page modes", async ({
       await page.getByRole("button", { name: "多码一页" }).click();
       await expect(page.locator(".print-grid.single")).toHaveCount(0);
     }
+
+    // 纯净版导出：一键 ZIP，含全部评委的「二维码 + 席位标签」PNG
+    await page.goto(base + "/admin/print");
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByRole("button", { name: "导出图片 ZIP" }).click(),
+    ]);
+    expect(download.suggestedFilename()).toBe("评委评分二维码.zip");
+    const zip = readFileSync(await download.path());
+    const eocd = zip.length - 22;
+    expect(zip.toString("latin1", eocd, eocd + 4)).toBe("PK\u0005\u0006");
+    expect(zip.readUInt16LE(eocd + 10)).toBe(judges); // 目录条目 = 评委数
+    // 第一项为合法 PNG：跳过本地头与文件名后校验魔数
+    const nameLength = zip.readUInt16LE(26),
+      extraLength = zip.readUInt16LE(28),
+      dataStart = 30 + nameLength + extraLength;
+    expect(zip.toString("latin1", dataStart, dataStart + 8)).toBe(
+      "\u0089PNG\r\n\u001a\n",
+    );
+    expect(zip.length).toBeGreaterThan(judges * 3000); // 每张图有实际内容
   } finally {
     await context.close();
     service.close();
