@@ -60,20 +60,35 @@
 .projection-board .stage-heading { line-height: 1.15; }
 .projection-board .layer-content { width: 84%; max-height: 78%; overflow: auto; scrollbar-width: thin; }
 .projection-board .stage-results { display: block; padding: 0; }
-.projection-board .standings { gap: .13em; }
+/* 排名榜：三列共享轨道（subgrid），宽度收缩到实际内容 ——
+   名称列取最长队名宽度，分数紧跟其后，整榜紧凑居中 */
+.projection-board .standings {
+  gap: .1em;
+  grid-template-columns: 2.6em auto 5em;
+  width: max-content;
+  max-width: 84cqw;
+  margin-inline: auto;
+}
 .projection-board .standing-row {
-  grid-template-columns: 2em minmax(0, 1fr) 4.4em 3.8em;
-  padding: .22em .6em;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  padding: .26em .2em;
   border: 0;
-  border-bottom: 1px solid currentColor;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 26%, transparent);
   border-radius: 0;
   font-size: inherit;
   background: transparent;
   line-height: 1.15;
 }
-.projection-board .standing-team { text-align: left; }
+.projection-board .standing-row:last-child { border-bottom: 0; }
+.projection-board .standing-team { text-align: left; max-width: 42cqw; }
+/* 队伍名与项目名统一纯白，项目名略小于队伍名（0.8 倍） */
+.projection-board .standing-project { font-size: .8em; margin-left: .35em; color: inherit; }
 .projection-board .standing-score { font-variant-numeric: tabular-nums; }
-.projection-board .prize-label { background: transparent; border: 0; font-size: .78em; }
+/* 名次配色：1-2 名金色、3-5 名银色（中性银）、6 名及以后铜色（深铜，与金色拉开层次） */
+.projection-board .rank-num { color: #cd8548; }
+.projection-board :is(.place-1, .place-2) .rank-num { color: #ffd76a; }
+.projection-board :is(.place-3, .place-4, .place-5) .rank-num { color: #d7d9dc; }
 /* 奖项标题（团体奖与个人奖的奖级名）：复刻颁奖海报的金色立体渐变材质 ——
    超粗黑体、亮金→正金→古铜垂直渐变、深棕浮雕挤出、金色光晕。
    color 保留实色兜底（渐变不可用时仍可读，也是对比度检测取到的有效色）。 */
@@ -95,7 +110,21 @@
     drop-shadow(0 0.1em 0.3em rgb(96 14 6 / .5))
     drop-shadow(0 0 0.45em rgb(255 200 80 / .35));
 }
-.projection-board .honor-grid { gap: .6em; }
+/* 颁奖卡片自动排布：每排居中对称（1+2 / 2+2 / 2+2+1），可按卡片微调位置 */
+.projection-board .honor-rows { display: flex; flex-direction: column; align-items: center; gap: .55em; }
+.projection-board .honor-row {
+  display: flex;
+  justify-content: center;
+  gap: 2.6cqw;
+  width: 100%;
+  min-height: 0;
+}
+.projection-board .honor-row > article { flex: 1 1 0; min-width: 0; max-width: 40cqw; }
+.projection-board .honor-row > article:only-child { max-width: 46cqw; }
+/* 排版预览中保存的卡片偏移（cqw/cqh 相对整块投屏画布） */
+.projection-board .honor-rows .honor-winner {
+  transform: translate(calc(var(--dx, 0) * 1cqw), calc(var(--dy, 0) * 1cqh));
+}
 .projection-board :is(.honor-winner, .personal-honor) {
   padding: .28em .2em;
   background: transparent;
@@ -227,7 +256,8 @@
   .projection-board .projection-layer {
     font-size: calc(var(--text-size) * min(0.12cqw, 0.09259259cqh));
   }
-  .projection-board .honor-grid { grid-template-columns: 1fr; gap: .18em; }
+  .projection-board .honor-row { flex-direction: column; gap: .18em; }
+  .projection-board .honor-row > article { max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .projection-board .entering :is(.standing-row, .personal-honor, .honor-winner) { animation: none; }

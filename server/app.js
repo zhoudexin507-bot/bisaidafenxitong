@@ -671,6 +671,41 @@ export function createApp(config) {
       saveSettings(db, { ...getSettings(db), ...options }));
     res.json({ ok: true });
   });
+  // 颁奖卡片位置微调：按记录 ID 保存偏移（先于通用 :layer 路由注册）
+  app.put("/api/admin/display-layout/:view/cards", admin, (req, res) => {
+    const { view } = req.params;
+    if (!["teamAwards", "individualAwards"].includes(view))
+      fail(404, "该画面不支持卡片位置调整");
+    const body = z
+      .object({
+        reset: z.boolean().optional(),
+        id: z.string().min(1).max(100).optional(),
+        dx: z.number().int().min(-30).max(30).optional(),
+        dy: z.number().int().min(-30).max(30).optional(),
+      })
+      .refine(
+        (v) => v.reset === true || (v.id !== undefined && v.dx !== undefined && v.dy !== undefined),
+        { message: "请提供卡片 id 与偏移，或使用 reset" },
+      )
+      .parse(req.body);
+    changed("管理员", "调整获奖卡片位置", { view, ...body }, () => {
+      const settings = getSettings(db);
+      const layouts = settings.displayLayouts || {};
+      const viewLayout = layouts[view] || {};
+      const offsets = { ...(viewLayout.cards?.offsets || {}) };
+      if (body.reset) for (const id of Object.keys(offsets)) delete offsets[id];
+      else if (!body.dx && !body.dy) delete offsets[body.id];
+      else offsets[body.id] = { dx: body.dx, dy: body.dy };
+      saveSettings(db, {
+        ...settings,
+        displayLayouts: {
+          ...layouts,
+          [view]: { ...viewLayout, cards: { offsets } },
+        },
+      });
+    });
+    res.json({ ok: true });
+  });
   app.put("/api/admin/display-layout/:view/:layer", admin, (req, res) => {
     const { view, layer } = req.params;
     if (!Object.hasOwn(displayLayouts, view) || !Object.hasOwn(displayLayouts[view], layer))

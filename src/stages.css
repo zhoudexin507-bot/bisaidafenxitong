@@ -792,7 +792,7 @@
 }
 .standing-row {
   display: grid;
-  grid-template-columns: 3em 1fr minmax(5em, 12%) minmax(5em, 17%);
+  grid-template-columns: 3em minmax(0, 1fr) minmax(5em, 17%);
   gap: .6em;
   align-items: center;
   padding: .5em 1.2em .5em 0;
@@ -808,20 +808,17 @@
 .rank-num, .standing-score { font: 600 1.45em/1.1 "Score Sans", sans-serif; }
 .standings .rank-num { width: auto; height: auto; color: var(--rank, #536a87); text-align: center; }
 .standing-team { overflow-wrap: anywhere; color: #103b75; line-height: 1.2; }
-.standing-score { grid-column: 4; text-align: right; color: #0969c9; }
+/* 排名行的项目名称小字：跟在队伍名后面 */
+.standing-project {
+  margin-left: .6em;
+  font-size: .62em;
+  font-weight: 500;
+  color: #5f6c7d;
+}
+.standing-score { text-align: right; color: #0969c9; }
 .medal-1 { --medal: #e2bd62; --badge-ink: #805a06; --badge-bg: #fbf0d2; }
 .medal-2 { --medal: #c8d5e6; --badge-ink: #49627f; --badge-bg: #edf2f8; }
 .medal-3 { --medal: #d9a173; --badge-ink: #835131; --badge-bg: #f8ebe1; }
-.prize-label {
-  justify-self: start;
-  color: var(--badge-ink);
-  background: var(--badge-bg);
-  border: 1px solid currentColor;
-  border-radius: 5px;
-  font-size: .69em;
-  padding: .15em .5em;
-  white-space: nowrap;
-}
 .stage-view .standing-row { min-height: 0; padding-block: 0; font-size: clamp(20px, 3.6vh, 40px); }
 .stage-view .standing-score { font-size: clamp(32px, 5.55vh, 64px); }
 .stage-view .standings-short .standing-row { font-size: clamp(26px, 4.4vh, 52px); }
@@ -853,10 +850,21 @@
   height: 1px;
   background: currentColor;
 }
-.honor-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
+/* 颁奖卡片自动排布：每排居中对齐，3 个 = 1 + 2，5 个 = 2 + 2 + 1 */
+.honor-rows {
+  display: flex;
+  flex-direction: column;
   gap: clamp(12px, 1.7vw, 36px);
+}
+.honor-row {
+  display: flex;
+  justify-content: center;
+  gap: clamp(12px, 1.7vw, 36px);
+}
+.honor-row > article {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: min(420px, 46vw);
 }
 .honor-winner, .personal-honor {
   padding: 24px;
@@ -868,7 +876,7 @@
   overflow-wrap: anywhere;
 }
 .honor-winner h3, .personal-honor h3 { font-size: 26px; line-height: 1.25; }
-.honor-grid p { margin-top: .7em; white-space: pre-line; line-height: 1.5; }
+.honor-rows p { margin-top: .7em; white-space: pre-line; line-height: 1.5; }
 .personal-award-title { font-size: 18px; color: #805a06; margin-bottom: .65em; }
 .ceremony .honor-heading { font-size: clamp(46px, 9.4vh, 104px); color: var(--medal); }
 .ceremony .honor-grid { width: 100%; margin-inline: auto; }
@@ -984,12 +992,12 @@
   }
   .rank-num { grid-column: 1; grid-row: 1 / span 2; }
   .standing-team { grid-column: 2; }
-  .prize-label { grid-column: 2; grid-row: 2; }
   .standing-score, .stage-view .standing-score, .stage-view .standings-short .standing-score {
     grid-column: 3; grid-row: 1 / span 2; font-size: 26px;
   }
   .stage-results { align-self: start; }
-  .honor-grid { grid-template-columns: 1fr; }
+  .honor-row { flex-direction: column; }
+  .honor-row > article { max-width: none; }
   .ceremony .honor-grid:has(> :only-child) { max-width: none; }
   .ceremony .stage-results { align-self: center; padding-block: 24px; }
   .ceremony .honor-heading { font-size: 44px; }

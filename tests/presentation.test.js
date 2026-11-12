@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resultPages, resultViews } from "../shared/slides.js";
+import { awardRows, resultPages, resultViews } from "../shared/slides.js";
 import { fixture } from "./helpers.js";
 
 test("presenter authenticates, rehearses, advances rounds atomically and publishes fixed awards", async (t) => {
@@ -194,6 +194,18 @@ test("个人奖按等级分页：三等 → 二等 → 一等，未分组垫底"
     resultPages({ awards }, "individualAwards").map((page) => page.map((a) => a.id)),
     [[3, 5], [4], [1], [2, 6]],
   );
+});
+
+test("颁奖卡片自动排布：每排居中对称，奇数余量独占一行", () => {
+  assert.deepEqual(awardRows(1), [1]);
+  assert.deepEqual(awardRows(2), [2]);
+  assert.deepEqual(awardRows(3), [1, 2]);
+  assert.deepEqual(awardRows(4), [2, 2]);
+  assert.deepEqual(awardRows(5), [2, 2, 1]);
+  assert.deepEqual(awardRows(6), [2, 2, 2]);
+  assert.deepEqual(awardRows(7), [2, 2, 2, 1]);
+  for (const count of [1, 2, 3, 4, 5, 6, 7])
+    assert.equal(awardRows(count).reduce((a, b) => a + b, 0), count);
 });
 
 test("test phase previews the full award ceremony without touching official results", async (t) => {

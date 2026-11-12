@@ -15,3 +15,4 @@ artifacts/
 .remote-err.txt
 .remote-norm.txt
 .to-upload.txt
+tests/_mockup_tmp.txt

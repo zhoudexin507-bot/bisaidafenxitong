@@ -125,13 +125,21 @@ for (const judges of [7, 30]) {
       }
       await check("得分排名", async (page) => {
         await expect(page.locator(".standing-row")).toHaveCount(8);
-        await expect(page.locator(".prize-label")).toHaveCount(8);
+        await expect(page.locator(".prize-label")).toHaveCount(0);
+        await expect(page.locator(".standing-project").first()).toHaveText("警务实战");
       });
       for (const [level, count] of [["三等奖", 5], ["二等奖", 2], ["一等奖", 1]]) {
         await next();
         await check(level + "-" + count, async (page) => {
           await expect(page.locator(".honor-heading")).toHaveText(level);
           await expect(page.locator(".honor-winner")).toHaveCount(count);
+          // 居中对称排布：5 个 = 2+2+1，2 个 = 一排，1 个独占居中
+          if (count === 5) {
+            for (const [row, n] of [[0, 2], [1, 2], [2, 1]])
+              await expect(page.locator(".honor-row").nth(row).locator(".honor-winner")).toHaveCount(n);
+          } else {
+            await expect(page.locator(".honor-row")).toHaveCount(1);
+          }
           for (const selector of [".screen-event", ".screen-tools h1", ".honor-heading", ".honor-winner h3", ".winner-members"])
             await checkTextContrast(page.locator(selector));
         });

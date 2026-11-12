@@ -39,13 +39,26 @@ test("home title switch, private layout preview and published results use the sa
     expect(rect.height).toBe(768);
     await screen.setViewportSize({ width: 1920, height: 1080 });
     await admin.locator(".layout-pickers").getByRole("button", { name: "得分排名" }).click();
-    await expect(admin.getByText("赛前排版使用示例数据")).toBeVisible();
+    await expect(admin.getByText("使用已录入队伍与奖项名额，名次与分数为示例")).toBeVisible();
     await admin.getByLabel("字号（1920px 画布）").fill("80");
     await admin.getByLabel("水平位置（%）").fill("29");
     await admin.getByLabel("垂直位置（%）").fill("18");
     await admin.getByLabel("文字颜色").fill("#eec144");
     await admin.getByRole("button", { name: "保存此文字项" }).click();
     await expect(admin.getByRole("button", { name: "保存此文字项" })).toBeDisabled();
+    // 团体奖项卡片位置微调：保存单个卡片偏移，再整体恢复自动排版
+    await admin.locator(".layout-pickers").getByRole("button", { name: "团体奖项" }).click();
+    await admin.locator(".card-layout-form .chip-row .chip").nth(1).click();
+    await admin.getByLabel("水平偏移（画面宽 %）").fill("5");
+    await admin.getByRole("button", { name: "保存卡片位置" }).click();
+    await expect(admin.locator(".card-layout-form .chip").filter({ hasText: "✥" })).toHaveCount(1);
+    const cardState = await (await context.request.get(base + "/api/admin/state")).json();
+    expect(Object.values(cardState.settings.displayLayouts?.teamAwards?.cards?.offsets || {}))
+      .toEqual([{ dx: 5, dy: 0 }]);
+    await admin.getByRole("button", { name: "恢复全部自动排版" }).click();
+    await expect(admin.locator(".card-layout-form .chip").filter({ hasText: "✥" })).toHaveCount(0);
+    const resetState = await (await context.request.get(base + "/api/admin/state")).json();
+    expect(resetState.settings.displayLayouts?.teamAwards?.cards?.offsets || {}).toEqual({});
     await admin.getByRole("button", { name: "返回现场预览", exact: true }).click();
     await expect(screen.locator(".board-home")).toHaveText("");
     await f.rehearse();

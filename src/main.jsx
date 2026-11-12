@@ -38,13 +38,13 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { resultPages, awardLevelNames } from "../shared/slides.js";
+import { resultPages, awardRows, awardLevelNames } from "../shared/slides.js";
 import "./styles.css";
 import "./stages.css";
 import { LiveDesk, StageControls, StageCover } from "./live-desk.jsx";
 import { applyTheme, readTheme, THEMES } from "./theme.js";
 import "./themes.css";
-import { LayoutPreview, ProjectionBoard, sampleResults } from "./projection.jsx";
+import { LayoutPreview, ProjectionBoard, previewResults } from "./projection.jsx";
 
 const statusNames = {
   draft: "筹备中",
@@ -916,6 +916,52 @@ const displayViews = [
 ];
 const prizeNames = ["", "一等奖", "二等奖", "三等奖"];
 
+// 颁奖卡片自动排布：按 awardRows 分行居中；个别卡片可按记录 ID 微调位置（排版预览中设置）
+function AwardRows({ items, view, data, card }) {
+  const offsets =
+    data.cardOffsets || data.settings?.displayLayouts?.[view]?.cards?.offsets || {};
+  let start = 0;
+  return (
+    <div className="honor-rows">
+      {awardRows(items.length).map((count, r) => {
+        const row = items.slice(start, start + count);
+        const base = start;
+        start += count;
+        return (
+          <div className="honor-row" key={r}>
+            {row.map((item, i) => {
+              const offset = offsets[item.id] || {};
+              return (
+                <article
+                  key={item.id}
+                  className={`honor-winner ${card || ""}`}
+                  style={{
+                    "--index": base + i,
+                    "--dx": offset.dx || 0,
+                    "--dy": offset.dy || 0,
+                  }}
+                >
+                  {card === "personal-honor" ? (
+                    <>
+                      <h3>{item.recipient}</h3>
+                      <p className="winner-members">{item.name}</p>
+                    </>
+                  ) : (
+                    <>
+                      <h3>{item.team}</h3>
+                      <p className="winner-members">{item.members || "名单待录入"}</p>
+                    </>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ResultsView({ data, view }) {
   if (view === "ranking") {
     const teams = data.ranking;
@@ -926,8 +972,12 @@ function ResultsView({ data, view }) {
           <li key={team.id} className={`standing-row place-${team.rank}`}
             style={{ "--delay": (teams.length - i - 1) * 70 + "ms" }}>
             <span className="rank-num" aria-label={`第 ${team.rank} 名`}>{team.rank}</span>
-            <strong className="standing-team">{team.team}</strong>
-            {team.prize > 0 && <span className={`prize-label medal-${team.prize}`}>{prizeNames[team.prize]}</span>}
+            <strong className="standing-team">
+              {team.team}
+              {team.name && team.name !== team.team && (
+                <span className="standing-project">{team.name}</span>
+              )}
+            </strong>
             <strong className="standing-score">{team.result.complete ? fmt(team.result.average) : "—"}</strong>
           </li>
         ))}
@@ -944,14 +994,7 @@ function ResultsView({ data, view }) {
           return (
             <section key={level} className={`team-honor medal-${level}`}>
               <h2 className="honor-heading">{prizeNames[level]}</h2>
-              <div className="honor-grid" style={{ "--columns": Math.min(teams.length, 4) }}>
-                {teams.map((p, i) => (
-                  <article className="honor-winner" key={p.id} style={{ "--index": i }}>
-                    <h3>{p.team}</h3>
-                    <p className="winner-members">{p.members || "名单待录入"}</p>
-                  </article>
-                ))}
-              </div>
+              <AwardRows items={teams} view={view} data={data} />
             </section>
           );
         })}
@@ -971,14 +1014,7 @@ function ResultsView({ data, view }) {
       {groups.map(({ level, awards }) => (
         <section key={level} className={`team-honor medal-${level || 1}`}>
           <h2 className="honor-heading">{awardLevelNames[level]}</h2>
-          <div className="honor-grid" style={{ "--columns": Math.min(awards.length, 5) }}>
-            {awards.map((award, i) => (
-              <article className="honor-winner personal-honor" key={award.id} style={{ "--index": i }}>
-                <h3>{award.recipient}</h3>
-                <p className="winner-members">{award.name}</p>
-              </article>
-            ))}
-          </div>
+          <AwardRows items={awards} view={view} data={data} card="personal-honor" />
         </section>
       ))}
     </div>
@@ -1197,11 +1233,19 @@ function BackgroundSettings({ data, refresh }) {
   );
 }
 
-// 赛前（成绩未发布）用示例数据检查排名与颁奖画面，不影响现场大屏
+// 赛前（成绩未发布）用示例数据检查排名与颁奖画面，不影响现场大屏；
+// 个人奖项与打分无关，已录入名单时直接预览真实最终画面。
 function CeremonySamplePreview({ data, view }) {
   const [page, setPage] = useState(0);
   useEffect(() => setPage(0), [view]);
-  const sample = { ...data, ...sampleResults, settings: { ...data.settings, presentation: { ...data.settings.presentation } } };
+  const useRealAwards = view === "individualAwards" && data.awards?.length > 0;
+  const useRealTeams =
+    (view === "ranking" || view === "teamAwards") && data.projects?.length > 0;
+  const sample = {
+    ...data,
+    ...previewResults(view, data),
+    settings: { ...data.settings, presentation: { ...data.settings.presentation } },
+  };
   const slides = resultPages(sample, view);
   const pages = Math.max(1, slides.length);
   const index = Math.min(page, pages - 1);
@@ -1215,6 +1259,14 @@ function CeremonySamplePreview({ data, view }) {
   };
   return (
     <>
+      {useRealAwards && (
+        <p className="sample-preview-reason">已按录入的个人奖项名单预览最终画面（{data.awards.length} 人）。</p>
+      )}
+      {useRealTeams && (
+        <p className="sample-preview-reason">
+          已按录入的队伍与奖项名额预览（{data.projects.length} 队），名次与分数为示例。
+        </p>
+      )}
       {pages > 1 && (
         <div className="scene-pages sample-preview-pages" aria-label="预览页面切换">
           <button className="button scene-page-button" disabled={index === 0}
