@@ -31,6 +31,11 @@ export function nextSlide(data) {
     enabled: true,
     ...extra,
   });
+  // 系统停用优先于一切流程：演示端提示恢复开放后才能继续
+  if (s.closed)
+    return step("openSystem", "系统已停用，请在后台恢复开放", {
+      enabled: false,
+    });
   if (s.stage && s.stage.scene !== "live")
     return step("returnStage", "返回比赛画面");
   if (s.status === "final") {

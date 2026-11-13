@@ -22,6 +22,7 @@ import {
 import { calculate, rankProjects, csvCell } from "./scoring.js";
 import { nextSlide, pageCount } from "./presentation.js";
 import { resultViews } from "../shared/slides.js";
+import { analyzeJudges } from "../shared/analysis.js";
 import { displayLayouts } from "../shared/display-layout.js";
 import { defaultStage, changeStage, isScoreReleased, scoreReleaseKey } from "./stage.js";
 
@@ -348,6 +349,18 @@ export function createApp(config) {
   });
   function publicSnapshot() {
     const data = snapshot();
+    // 系统停用：对外只回最小负载，不暴露赛事标题、名单与背景
+    if (data.settings.closed)
+      return {
+        settings: { closed: true },
+        projects: [],
+        judges: [],
+        ranking: [],
+        awards: [],
+        backgrounds: {},
+        currentTeamNumber: null,
+        serverTime: new Date().toISOString(),
+      };
     // 收官画面（排名/颁奖）在正式发布后，或测试阶段收官预演中对外可见
     const ceremony =
       data.settings.status === "final" ||
@@ -664,6 +677,49 @@ export function createApp(config) {
         .all(),
     }),
   );
+  // 评委打分分析：按阶段聚合 entries；剔除判定复用 calculate()，与计分口径同源
+  app.get("/api/admin/analysis", admin, (req, res) => {
+    const settings = getSettings(db);
+    const phase =
+      req.query.phase === "test" || req.query.phase === "official"
+        ? req.query.phase
+        : settings.mode;
+    // 测试评分按设计只打一轮；正式阶段按设置的轮数
+    const rounds = phase === "test" ? 1 : settings.rounds;
+    const judges = db
+      .prepare("SELECT id,name,title,enabled FROM judges ORDER BY rowid")
+      .all()
+      .map((j, i) => ({ ...j, number: i + 1 }));
+    const projects = db
+      .prepare("SELECT * FROM projects ORDER BY position,rowid")
+      .all();
+    const entries = db
+      .prepare("SELECT * FROM entries WHERE phase=? ORDER BY submitted_at")
+      .all(phase);
+    const groups = new Map();
+    for (const entry of entries) {
+      const key = `${entry.project_id}:${entry.round}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(entry);
+    }
+    const results = {};
+    for (const project of projects)
+      for (let round = 1; round <= rounds; round++)
+        results[`${project.id}:${round}`] = calculate(
+          groups.get(`${project.id}:${round}`) || [],
+          settings,
+          judges.length,
+        );
+    res.json({
+      phase,
+      mode: settings.mode,
+      status: settings.status,
+      title: settings.title,
+      trimEnabled: settings.trimEnabled,
+      serverTime: new Date().toISOString(),
+      ...analyzeJudges({ judges, projects, entries, results, rounds }),
+    });
+  });
   app.put("/api/admin/display-options", admin, (req, res) => {
     const options = z.object({ showTeamNumber: z.boolean() })
       .partial().strict().refine(v => Object.keys(v).length > 0).parse(req.body);
@@ -1224,6 +1280,20 @@ export function createApp(config) {
     );
     res.type("image/svg+xml").send(svg);
   });
+  // 非比赛时间停用系统：叠加在任何比赛状态之上的对外开关，
+  // 停用后大屏与评委端只显示「未开放」，管理后台不受影响。
+  app.post("/api/admin/access", admin, (req, res) => {
+    const { closed } = z.object({ closed: z.boolean() }).parse(req.body);
+    const s = getSettings(db);
+    if (closed && s.status === "running")
+      fail(409, "比赛进行中，请先暂停或结束比赛再停用");
+    if (closed === !!s.closed)
+      fail(409, s.closed ? "系统已处于停用状态" : "系统当前已开放");
+    changed("管理员", closed ? "停用系统" : "恢复开放", {}, () =>
+      saveSettings(db, { ...s, closed }),
+    );
+    res.json({ ok: true, closed });
+  });
   app.post("/api/admin/status", admin, (req, res) => {
     const { status } = z
       .object({ status: z.enum(["running", "paused", "final"]) })
@@ -1449,6 +1519,17 @@ export function createApp(config) {
     judgePresence.set(req.judge.id, { at: Date.now(), version: req.judge.token_version });
     const s = getSettings(db);
     const judges = db.prepare("SELECT id FROM judges ORDER BY rowid").all();
+    // 系统停用期间：评委页只显示「未开放」，不下发项目与赛事信息
+    if (s.closed)
+      return res.json({
+        closed: true,
+        settings: { closed: true, judgeCount: judges.length, projectCount: 0 },
+        judge: {
+          id: req.judge.id,
+          number: judges.findIndex((j) => j.id === req.judge.id) + 1,
+        },
+        projects: [],
+      });
     const projects = judgeProjects.all({ phase: s.mode, round: s.currentRound, judge: req.judge.id });
     res.json({
       settings: { ...s, judgeCount: judges.length, projectCount: projects.length, releasedScores: undefined },

@@ -20,6 +20,8 @@ export const defaultSettings = {
   revealMode: "auto",
   showTeamNumber: true,
   releasedScores: {},
+  // 非比赛时间停用：叠加在任何 status 之上，对外只显示「未开放」
+  closed: false,
   stage: { scene: "live", message: "", remainingMs: 0, endsAt: null, version: 0 },
   presentation: { view: "project", projectId: null },
 };

@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Award,
+  BarChart3,
   Check,
   CheckCircle2,
   ChevronLeft,
@@ -39,12 +40,19 @@ import {
   X,
 } from "lucide-react";
 import { resultPages, awardRows, awardLevelNames } from "../shared/slides.js";
+import { zipStore } from "./zip.js";
+import { exportBoards, exportNode, useImageExport } from "./export-image.jsx";
 import "./styles.css";
 import "./stages.css";
 import { LiveDesk, StageControls, StageCover } from "./live-desk.jsx";
 import { applyTheme, readTheme, THEMES } from "./theme.js";
 import "./themes.css";
-import { LayoutPreview, ProjectionBoard, previewResults } from "./projection.jsx";
+import {
+  LayoutPreview,
+  ProjectionBoard,
+  previewResults,
+  projectionNames,
+} from "./projection.jsx";
 
 const statusNames = {
   draft: "筹备中",
@@ -257,6 +265,7 @@ function Connection({ connected }) {
 const navigation = [
   { label: "比赛控制台", path: "/admin", icon: LayoutDashboard },
   { label: "成绩排名", path: "/admin/ranking", icon: Trophy },
+  { label: "评委分析", path: "/admin/analysis", icon: BarChart3 },
   { label: "大屏控制", path: "/admin/display", icon: Monitor },
   { label: "项目管理", path: "/admin/projects", icon: ClipboardList },
   { label: "评委与二维码", path: "/admin/judges", icon: Users },
@@ -703,6 +712,7 @@ function Overview({ data, act }) {
     <>
       <PageTitle title="比赛控制台">
         <Badge status={data.settings.status} />
+        {data.settings.closed && <Badge status="paused">已停用</Badge>}
         <a
           className="button primary"
           href="/admin/present"
@@ -830,24 +840,50 @@ function CompetitionControls({ data, act }) {
     <div className="control-bar">
       <span>
         <Flag size={17} />
-        {s.mode === "test"
+        {s.closed
+          ? "系统已停用 · 对外不展示"
+          : s.mode === "test"
           ? "测试评分"
           : s.rounds > 1
             ? `正式比赛 · 第 ${s.currentRound} / ${s.rounds} 轮`
             : "正式比赛"}
       </span>
       <div className="actions">
+        {s.closed ? (
+          <Button
+            kind="primary"
+            onClick={() => act("/admin/access", "POST", { closed: false })}
+          >
+            恢复开放
+          </Button>
+        ) : (
+          <Button
+            disabled={s.status === "running"}
+            title={
+              s.status === "running"
+                ? "比赛进行中不能停用，请先暂停或结束比赛"
+                : "停用后大屏与评委端显示「未开放」，可随时恢复"
+            }
+            onClick={() => {
+              if (confirm("停用后大屏与评委端将显示「未开放」，确认停用系统？"))
+                act("/admin/access", "POST", { closed: true });
+            }}
+          >
+            停用系统
+          </Button>
+        )}
         {s.status === "draft" && (
           <>
             <Button
-              kind={!s.testCompleted ? "primary" : ""}
+              kind={!s.testCompleted && !s.closed ? "primary" : ""}
+              disabled={s.closed}
               onClick={() => act("/admin/test/start", "POST", {})}
             >
               {s.testCompleted ? "重新测试" : "开始测试评分"}
             </Button>
             <Button
               kind="primary"
-              disabled={!s.testCompleted}
+              disabled={!s.testCompleted || s.closed}
               onClick={() =>
                 act("/admin/status", "POST", { status: "running" })
               }
@@ -1025,6 +1061,7 @@ function Ranking({ data, act }) {
   const [order, setOrder] = useState("");
   const [reason, setReason] = useState("");
   const [view, setView] = useState("ranking");
+  const image = useImageExport();
   return (
     <>
       <PageTitle title="比赛成绩">
@@ -1032,6 +1069,22 @@ function Ranking({ data, act }) {
         <Badge status={data.settings.status === "final" ? "closed" : "open"}>
           {data.settings.status === "final" ? "最终成绩" : "未发布"}
         </Badge>
+        <Button
+          icon={ImageIcon}
+          disabled={image.busy}
+          onClick={() =>
+            image.run(() =>
+              exportBoards(
+                data,
+                view,
+                displayViews.find(([id]) => id === view)?.[1] || "比赛成绩",
+                ResultsView,
+              ),
+            )
+          }
+        >
+          {image.busy ? "正在生成…" : "导出图片"}
+        </Button>
         <Button icon={Printer} onClick={() => print()}>
           打印
         </Button>
@@ -1047,6 +1100,7 @@ function Ranking({ data, act }) {
           </Button>
         ))}
       </div>
+      {image.error && <ErrorBox error={image.error} />}
       {data.settings.status !== "final" &&
         data.ranking.some((p) => p.tieUnresolved) && (
           <section className="panel settings-section">
@@ -1092,6 +1146,385 @@ function Ranking({ data, act }) {
         )}
       <ResultsView data={data} view={view} />
     </>
+  );
+}
+
+// —— 评委打分分析：打分完成率 / 评分入选率、宽严指数、稳定性与逐项目评分矩阵 ——
+const percent = (rate) => (rate == null ? "—" : `${Math.round(rate * 100)}%`);
+const signed = (value) =>
+  value == null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(2)}`;
+
+// 偏差热力：±5 分封顶做透明度渐变，偏高偏暖、偏低偏冷
+function heatStyle(deviation) {
+  if (deviation == null) return undefined;
+  const alpha = 0.08 + (Math.min(Math.abs(deviation), 5) / 5) * 0.55;
+  return {
+    backgroundColor:
+      deviation >= 0
+        ? `rgba(225, 29, 72, ${alpha.toFixed(3)})`
+        : `rgba(37, 99, 235, ${alpha.toFixed(3)})`,
+  };
+}
+
+function MatrixCell({ project, cell, rounds }) {
+  if (!cell.submittedRounds)
+    return <td className="analysis-cell muted-cell">—</td>;
+  const trimmedRounds = cell.rounds.filter((r) => r.trimmed);
+  const value =
+    rounds > 1 ? cell.avgTotal / 100 : cell.rounds[0].total / 100;
+  const deviation =
+    rounds > 1
+      ? project.reference != null
+        ? value - project.reference
+        : null
+      : cell.rounds[0].deviation;
+  const title = cell.rounds
+    .map((r) =>
+      r.total == null
+        ? `第${r.round}轮：未提交`
+        : `第${r.round}轮 ${fmt(r.total / 100)}（偏差 ${signed(r.deviation)}${
+            r.trimmed
+              ? `，${r.trimmed === "high" ? "最高分" : "最低分"}已剔除`
+              : ""
+          }）`,
+    )
+    .join("\n");
+  return (
+    <td
+      className={`analysis-cell${trimmedRounds.length ? " cell-trimmed" : ""}`}
+      style={heatStyle(deviation)}
+      title={title}
+    >
+      {fmt(value)}
+      {!!trimmedRounds.length && <sup aria-label="该评委此项目有评分被剔除">剔</sup>}
+    </td>
+  );
+}
+
+function Analysis() {
+  const [phaseChoice, setPhaseChoice] = useState("");
+  const live = useLive(`/admin/analysis${phaseChoice ? `?phase=${phaseChoice}` : ""}`);
+  const image = useImageExport();
+  const report = useRef(null);
+  const { data } = live;
+  if (!data)
+    return (
+      <div className="loading">
+        <Activity size={28} />
+        <h2>{live.error ? "暂时无法获取分析数据" : "正在统计评委评分…"}</h2>
+        {live.error && <ErrorBox error={live.error} />}
+        <Button onClick={live.refresh} icon={RotateCw}>
+          重新连接
+        </Button>
+      </div>
+    );
+  const judges = data.judges;
+  const scoredJudges = judges.filter((j) => j.avg != null);
+  const panelAvg = scoredJudges.length
+    ? scoredJudges.reduce((n, j) => n + j.avg, 0) / scoredJudges.length
+    : null;
+  const leniencyScale = Math.max(
+    1,
+    ...judges.map((j) => Math.abs(j.leniency ?? 0)),
+  );
+  const projectLabel = new Map(
+    data.matrix.map((p) => [
+      p.id,
+      `${String(p.position).padStart(2, "0")}号 ${p.team}`,
+    ]),
+  );
+  function exportCsv() {
+    const cell = (value) => {
+      let str = String(value ?? "");
+      if (/^[\s]*[=+@-]/.test(str)) str = `'${str}`;
+      return `"${str.replaceAll('"', '""')}"`;
+    };
+    const header = [
+      "席位", "评委", "职务", "已提交", "应提交", "打分完成率", "平均分",
+      "最低分", "最高分", "标准差", "宽严指数", "被剔除(最高)", "被剔除(最低)",
+      "评分入选率", "平均提交次序", "缺评",
+    ];
+    const rows = judges.map((j) => [
+      String(j.number).padStart(2, "0"),
+      j.name,
+      j.title,
+      j.submitted,
+      j.expected,
+      percent(j.completionRate),
+      j.avg == null ? "" : j.avg.toFixed(2),
+      j.min == null ? "" : j.min.toFixed(2),
+      j.max == null ? "" : j.max.toFixed(2),
+      j.stdDev == null ? "" : j.stdDev.toFixed(2),
+      signed(j.leniency),
+      j.trimmedHigh,
+      j.trimmedLow,
+      percent(j.keptRate),
+      j.avgOrder == null ? "" : j.avgOrder.toFixed(1),
+      j.missing.map((m) => projectLabel.get(m.projectId) || m.projectId).join("、"),
+    ]);
+    const csv =
+      "\uFEFF" + [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n");
+    const url = URL.createObjectURL(
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "评委打分分析.csv";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+  const seatName = (j) =>
+    /^评委\s*\d+$/.test(j.name) ? "" : j.name;
+  return (
+    <div className="analysis-page" ref={report}>
+      <PageTitle title="评委打分分析">
+        <Badge status={data.phase === "test" ? "open" : "closed"}>
+          {data.phase === "test" ? "测试评分" : "正式评分"}
+        </Badge>
+        <Button icon={Download} onClick={exportCsv} disabled={!judges.length}>
+          导出 CSV
+        </Button>
+        <Button
+          icon={ImageIcon}
+          disabled={image.busy || !judges.length}
+          onClick={() =>
+            image.run(() =>
+              exportNode(
+                report.current,
+                `评委打分分析-${new Date().toISOString().slice(0, 10)}.png`,
+              ),
+            )
+          }
+        >
+          {image.busy ? "正在生成…" : "导出图片"}
+        </Button>
+      </PageTitle>
+      <div className="result-tabs" role="group" aria-label="评分阶段">
+        {[["official", "正式评分"], ["test", "测试评分"]].map(([id, label]) => (
+          <Button
+            key={id}
+            kind={data.phase === id ? "primary" : ""}
+            onClick={() => setPhaseChoice(id)}
+          >
+            {label}
+            {data.phase === id && data.mode === id ? " · 当前阶段" : ""}
+          </Button>
+        ))}
+      </div>
+      {image.error && <ErrorBox error={image.error} />}
+      {!data.matrix.length || !judges.length ? (
+        <Empty title="暂无可分析的评分数据">
+          <a href="/admin/projects">先配置项目与评委</a>
+        </Empty>
+      ) : (
+        <>
+          <div className="stats-strip">
+            <div>
+              <span><Users size={15} />评委席位</span>
+              <strong>{judges.length}<small> 席</small></strong>
+            </div>
+            <div>
+              <span><ClipboardList size={15} />评分规模</span>
+              <strong>{data.matrix.length}<small> 项 × {data.rounds} 轮</small></strong>
+            </div>
+            <div>
+              <span><CheckCircle2 size={15} />总体完成率</span>
+              <strong>{percent(data.totals.completionRate)}</strong>
+            </div>
+            <div>
+              <span><ShieldCheck size={15} />去极值剔除</span>
+              <strong>{data.totals.trimmed}<small> 次</small></strong>
+            </div>
+          </div>
+
+          <section className="panel">
+            <div className="section-head">
+              <h2>
+                评委总览 <span className="count">{judges.length}</span>
+              </h2>
+              <span className="analysis-hint">
+                完成率 = 已提交 / 应提交；入选率 = 提交评分中未被去极值剔除的比例
+              </span>
+            </div>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>评委</th>
+                    <th>打分完成率</th>
+                    <th>平均分</th>
+                    <th>给分区间</th>
+                    <th>稳定性 σ</th>
+                    <th>宽严指数</th>
+                    <th>评分入选率</th>
+                    <th>被剔除</th>
+                    <th className="align-right">平均次序</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {judges.map((j) => (
+                    <tr key={j.id} className={j.enabled ? "" : "row-disabled"}>
+                      <td>
+                        <strong>{String(j.number).padStart(2, "0")} {j.name}</strong>
+                        {j.title && <small className="table-sub">{j.title}</small>}
+                      </td>
+                      <td>
+                        <div className="progress-info">
+                          <span className="numeric">
+                            {j.submitted}
+                            <span className="muted"> / {j.expected}</span>
+                          </span>
+                          <div className="progress">
+                            <span style={{ width: `${(j.completionRate || 0) * 100}%` }} />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="numeric">{fmt(j.avg)}</td>
+                      <td className="numeric">
+                        {j.min == null ? "—" : `${fmt(j.min)} – ${fmt(j.max)}`}
+                      </td>
+                      <td className="numeric">{j.stdDev == null ? "—" : j.stdDev.toFixed(2)}</td>
+                      <td className={`numeric ${j.leniency == null ? "" : j.leniency >= 0 ? "leniency-high" : "leniency-low"}`}>
+                        {signed(j.leniency)}
+                      </td>
+                      <td className="numeric">{percent(j.keptRate)}</td>
+                      <td className="numeric">
+                        {data.trimEnabled === false
+                          ? "不适用"
+                          : `${j.trimmedTotal} 次${j.trimmedTotal ? `（高 ${j.trimmedHigh} / 低 ${j.trimmedLow}）` : ""}`}
+                      </td>
+                      <td className="numeric align-right">
+                        {j.avgOrder == null ? "—" : j.avgOrder.toFixed(1)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-head">
+              <h2>平均分与宽严对比</h2>
+              {panelAvg != null && (
+                <span className="count">全体均值 {fmt(panelAvg)}</span>
+              )}
+            </div>
+            <div className="analysis-charts">
+              <div>
+                <h3 className="analysis-chart-title">各评委平均分</h3>
+                <div className="bar-chart">
+                  {judges.map((j) => (
+                    <div className="bar-row" key={j.id}>
+                      <span className="bar-label">
+                        {String(j.number).padStart(2, "0")} {seatName(j)}
+                      </span>
+                      <div className="bar-track">
+                        {j.avg != null ? (
+                          <span className="bar-fill" style={{ width: `${j.avg}%` }} />
+                        ) : (
+                          <span className="bar-empty">未评分</span>
+                        )}
+                        {panelAvg != null && (
+                          <i className="bar-mean" style={{ left: `${panelAvg}%` }} />
+                        )}
+                      </div>
+                      <span className="bar-value numeric">{fmt(j.avg)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 className="analysis-chart-title">宽严指数（对参照均分的平均偏差）</h3>
+                <div className="bar-chart">
+                  {judges.map((j) => (
+                    <div className="bar-row" key={j.id}>
+                      <span className="bar-label">
+                        {String(j.number).padStart(2, "0")} {seatName(j)}
+                      </span>
+                      <div className="bar-track diverging">
+                        {j.leniency != null && (
+                          <span
+                            className={`diverge-fill ${j.leniency >= 0 ? "diverge-high" : "diverge-low"}`}
+                            style={
+                              j.leniency >= 0
+                                ? { left: "50%", width: `${(j.leniency / leniencyScale) * 50}%` }
+                                : { right: "50%", width: `${(-j.leniency / leniencyScale) * 50}%` }
+                            }
+                          />
+                        )}
+                        <i className="bar-center" />
+                      </div>
+                      <span className="bar-value numeric">{signed(j.leniency)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-head">
+              <h2>逐项目评分矩阵</h2>
+              <span className="analysis-legend">
+                <i className="legend-chip" style={heatStyle(3)} />偏高
+                <i className="legend-chip" style={heatStyle(-3)} />偏低
+                <b className="legend-trim">剔</b>被去极值剔除
+                <span className="muted">— 未提交{data.rounds > 1 ? " · 多轮显示各轮平均" : ""}</span>
+              </span>
+            </div>
+            <div className="table-scroll">
+              <table className="analysis-matrix">
+                <thead>
+                  <tr>
+                    <th>项目</th>
+                    {judges.map((j) => (
+                      <th key={j.id} className="analysis-judge-col">
+                        {String(j.number).padStart(2, "0")}
+                        {seatName(j) && <small className="table-sub">{seatName(j)}</small>}
+                      </th>
+                    ))}
+                    <th className="align-right">项目均分</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.matrix.map((p) => (
+                    <tr key={p.id}>
+                      <td>
+                        <strong>{p.name}</strong>
+                        <small className="table-sub">
+                          {String(p.position).padStart(2, "0")} · {p.team}
+                        </small>
+                      </td>
+                      {p.cells.map((cell) => (
+                        <MatrixCell
+                          key={cell.judgeId}
+                          project={p}
+                          cell={cell}
+                          rounds={data.rounds}
+                        />
+                      ))}
+                      <td className="numeric align-right">
+                        <strong>{fmt(p.reference)}</strong>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <th>评委平均</th>
+                    {judges.map((j) => (
+                      <th key={j.id} className="numeric">{fmt(j.avg)}</th>
+                    ))}
+                    <th className="numeric align-right">{fmt(panelAvg)}</th>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </section>
+        </>
+      )}
+    </div>
   );
 }
 function ScreenPreview({ children }) {
@@ -1292,12 +1725,20 @@ function PresentationControls({ data, act, refresh }) {
   const [editing, setEditing] = useState(false);
   const [sampleView, setSampleView] = useState(null);
   const [sampleReason, setSampleReason] = useState("");
+  const image = useImageExport();
   const presentation = data.settings.presentation;
   const current =
     data.projects.find((p) => p.id === presentation.projectId) ||
     data.projects.find((p) => ["ready", "open"].includes(p.status)) ||
     data.projects[0];
   const final = data.settings.status === "final";
+  // 发布成绩后仍可逐队回看评分画面：选择器与前后翻队始终可用
+  const teamIndex = current ? data.projects.indexOf(current) : -1;
+  const showTeam = (index) =>
+    act("/admin/presentation", "POST", {
+      view: "project",
+      projectId: data.projects[index].id,
+    });
   // 颁奖画面切换：始终由服务器裁决——本地数据可能滞后（如刚发布成绩），
   // 成功则真正切屏；服务器以 409 拒绝（成绩未发布）时才进入示例数据预览。
   async function toggleAwardView(view) {
@@ -1334,9 +1775,15 @@ function PresentationControls({ data, act, refresh }) {
         <div className="display-controls">
           <CompetitionControls data={data} act={act} />
           <StageControls data={data} act={act} onToggle={toggleAwardView} />
-          {!final && (
-            <section className="panel display-control">
-              <h2 className="display-section-title">大屏内容</h2>
+          <section className="panel display-control">
+            <h2 className="display-section-title">大屏内容</h2>
+            <div className="team-picker">
+              <Button
+                aria-label="上一队"
+                icon={ChevronLeft}
+                disabled={teamIndex <= 0}
+                onClick={() => showTeam(teamIndex - 1)}
+              />
               <Field label="当前展示队伍">
                 <select
                   value={current?.id || ""}
@@ -1357,8 +1804,16 @@ function PresentationControls({ data, act, refresh }) {
                   ))}
                 </select>
               </Field>
-              {current && (
-                <div className="actions">
+              <Button
+                aria-label="下一队"
+                icon={ChevronRight}
+                disabled={teamIndex < 0 || teamIndex >= data.projects.length - 1}
+                onClick={() => showTeam(teamIndex + 1)}
+              />
+            </div>
+            {/* 收分流程操作仅在成绩发布前有意义 */}
+            {!final && current && (
+              <div className="actions">
                   <Button
                     disabled={
                       data.settings.status === "draft" || current.scores.length > 0
@@ -1405,9 +1860,8 @@ function PresentationControls({ data, act, refresh }) {
                     重新评分
                   </a>
                 </div>
-              )}
-            </section>
-          )}
+            )}
+          </section>
           <BackgroundSettings data={data} refresh={refresh} />
         </div>
         <div className="display-preview">
@@ -1423,6 +1877,30 @@ function PresentationControls({ data, act, refresh }) {
               {sampleView && !editing && (
                 <Button onClick={() => setSampleView(null)}>返回现场预览</Button>
               )}
+              <Button
+                icon={ImageIcon}
+                title={
+                  presentation.view === "project"
+                    ? "评分画面无需导出；请先切到排名或颁奖画面"
+                    : "按 1920×1080 海报规格导出当前画面全部页面"
+                }
+                disabled={
+                  image.busy || editing || !!sampleView || presentation.view === "project"
+                }
+                onClick={() =>
+                  image.run(() =>
+                    exportBoards(
+                      data,
+                      presentation.view,
+                      projectionNames[presentation.view] || "大屏画面",
+                      ResultsView,
+                    ),
+                  )
+                }
+              >
+                {image.busy ? "正在生成…" : "导出图片"}
+              </Button>
+              {image.error && <span role="alert" className="preview-export-error">{image.error.message}</span>}
               <Button aria-pressed={editing} onClick={() => {
                 if (!editing) setSampleView(null);
                 setEditing(!editing);
@@ -2845,75 +3323,7 @@ function Logs({ data }) {
 
 // —— 评委二维码纯净图导出：canvas 合成「二维码 + 席位标签」，打包为 ZIP ——
 // 图片仅白底、二维码与一行席位信息，不含打印版说明文字，便于发送或自行排版。
-function crc32(bytes) {
-  if (!crc32.table) {
-    crc32.table = new Int32Array(256);
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-      crc32.table[n] = c;
-    }
-  }
-  let crc = -1;
-  for (const byte of bytes) crc = (crc >>> 8) ^ crc32.table[(crc ^ byte) & 0xff];
-  return (crc ^ -1) >>> 0;
-}
-
-// 无压缩（store）ZIP：二维码 PNG 本就很小，免引第三方打包库。
-// 文件名置 UTF-8 标志位，现代解压器均可正确显示中文名。
-function zipStore(files) {
-  const encoder = new TextEncoder();
-  const local = [],
-    central = [];
-  let offset = 0;
-  const now = new Date();
-  const time =
-    (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
-  const date =
-    ((now.getFullYear() - 1980) << 9) |
-    ((now.getMonth() + 1) << 5) |
-    now.getDate();
-  for (const file of files) {
-    const name = encoder.encode(file.name),
-      size = file.bytes.length,
-      crc = crc32(file.bytes);
-    const header = new DataView(new ArrayBuffer(30));
-    header.setUint32(0, 0x04034b50, true);
-    header.setUint16(4, 20, true); // version needed
-    header.setUint16(6, 0x0800, true); // UTF-8 file names
-    header.setUint16(10, time, true);
-    header.setUint16(12, date, true);
-    header.setUint32(14, crc, true);
-    header.setUint32(18, size, true);
-    header.setUint32(22, size, true);
-    header.setUint16(26, name.length, true);
-    local.push(new Uint8Array(header.buffer), name, file.bytes);
-    const entry = new DataView(new ArrayBuffer(46));
-    entry.setUint32(0, 0x02014b50, true);
-    entry.setUint16(4, 20, true);
-    entry.setUint16(6, 20, true);
-    entry.setUint16(8, 0x0800, true);
-    entry.setUint16(12, time, true);
-    entry.setUint16(14, date, true);
-    entry.setUint32(16, crc, true);
-    entry.setUint32(20, size, true);
-    entry.setUint32(24, size, true);
-    entry.setUint16(28, name.length, true);
-    entry.setUint32(42, offset, true);
-    central.push(new Uint8Array(entry.buffer), name);
-    offset += 30 + name.length + size;
-  }
-  const centralSize = central.reduce((n, part) => n + part.length, 0);
-  const end = new DataView(new ArrayBuffer(22));
-  end.setUint32(0, 0x06054b50, true);
-  end.setUint16(8, files.length, true);
-  end.setUint16(10, files.length, true);
-  end.setUint32(12, centralSize, true);
-  end.setUint32(16, offset, true);
-  return new Blob([...local, ...central, new Uint8Array(end.buffer)], {
-    type: "application/zip",
-  });
-}
+// （ZIP 打包工具已抽到 src/zip.js，与画面导出图片包共用。）
 
 // 取服务端 SVG 二维码，经 data: URL（受 CSP 许可）绘入 canvas 并加席位标签
 async function qrImageBytes(judge, label) {
@@ -3219,6 +3629,11 @@ function JudgeApp() {
       <main>
         {!data ? (
           live.error ? <ErrorBox error={live.error} /> : <p role="status">正在连接赛事…</p>
+        ) : data.closed ? (
+          <div className="judge-welcome">
+            <Badge status="paused">系统未开放</Badge>
+            <p>评分系统当前未开放，请在比赛时间访问</p>
+          </div>
         ) : (
           <>
             <div className="judge-welcome">
@@ -3318,19 +3733,20 @@ function PresenterControls({ data, current, revealed, page, refresh }) {
   const lock = useRef(false),
     lastAction = useRef(0);
   const next = data.presenter.next;
-  const manual = data.settings.presentation.manual;
+  // 系统停用时接口只回最小负载，presentation 可能缺席
+  const manual = data.settings.presentation?.manual;
   const waitingReveal = next.waitForReveal && !revealed;
   const disabled = busy || !manual || !next.enabled || waitingReveal;
   // 正式发布后与测试收官预演中均可回看颁奖页面
   const reviewing =
     data.settings.status === "final" ||
     (data.settings.mode === "test" &&
-      data.settings.presentation.view !== "project");
+      data.settings.presentation?.view !== "project");
   const canBack =
     reviewing &&
     (page > 0 ||
       ["teamAwards", "individualAwards"].includes(
-        data.settings.presentation.view,
+        data.settings.presentation?.view,
       ));
 
   async function run(path, body = {}) {
@@ -3584,6 +4000,33 @@ function PresenterControls({ data, current, revealed, page, refresh }) {
 }
 
 function Screen({ data, connected, presenter = false, refresh }) {
+  // 系统停用：大屏与演示端都显示未开放画面，不读任何比赛数据
+  // （演示端保留控制条，由 nextSlide 提示「恢复开放」后再推进）
+  if (data.settings.closed)
+    return (
+      <div
+        className={`screen-page stage-view stage-closed${presenter ? " presenter-screen" : ""}`}
+      >
+        <div className="stage-empty">
+          <h1>赛事系统未开放</h1>
+          <p>请在比赛时间访问</p>
+        </div>
+        {!connected && (
+          <div className="projection-connection">
+            <Connection connected={false} />
+          </div>
+        )}
+        {presenter && (
+          <PresenterControls
+            data={data}
+            current={undefined}
+            page={0}
+            refresh={refresh}
+            revealed={false}
+          />
+        )}
+      </div>
+    );
   const view = data.settings.presentation.view;
   const current =
     data.projects.find((p) => p.id === data.settings.presentation.projectId) ||
@@ -3752,6 +4195,7 @@ function App() {
   let content;
   if (path === "/admin/ranking")
     content = <Ranking data={data} act={safeAct} />;
+  else if (path === "/admin/analysis") content = <Analysis />;
   else if (path === "/admin/display")
     content = <PresentationControls data={data} act={safeAct} refresh={live.refresh} />;
   else if (path === "/admin/projects")

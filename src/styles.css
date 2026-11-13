@@ -2322,3 +2322,180 @@ p {
 .current-info {
   min-width: 0;
 }
+
+/* —— 大屏控制：当前展示队伍选择（下拉 + 前后翻队） —— */
+.team-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.team-picker select {
+  flex: 1;
+  min-width: 0;
+}
+.preview-export-error {
+  color: #b42318;
+  font-size: 12px;
+}
+
+/* —— 评委打分分析页 —— */
+.analysis-hint {
+  color: #5c646e;
+  font-size: 12px;
+}
+.analysis-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 26px;
+}
+.analysis-chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #3d4a59;
+  margin: 4px 0 12px;
+}
+.bar-chart {
+  display: grid;
+  gap: 7px;
+}
+.bar-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 150px) 1fr 52px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.bar-label {
+  color: #3d4a59;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-track {
+  position: relative;
+  height: 14px;
+  border-radius: 4px;
+  background: #eef2f5;
+  overflow: hidden;
+}
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #2f7fd1, #1265c4);
+}
+.bar-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 8px;
+  color: #9aa3ad;
+  font-size: 10px;
+}
+.bar-mean {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: #b42318;
+  opacity: 0.75;
+}
+.bar-value {
+  color: #3d4a59;
+  text-align: right;
+}
+.bar-track.diverging {
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.08), #eef2f5 50%, rgba(225, 29, 72, 0.08));
+}
+.diverge-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.diverge-high {
+  background: rgba(225, 29, 72, 0.55);
+}
+.diverge-low {
+  background: rgba(37, 99, 235, 0.55);
+}
+.bar-center {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: 50%;
+  width: 1px;
+  background: #9aa3ad;
+}
+.leniency-high {
+  color: #b42318;
+}
+.leniency-low {
+  color: #1d4ed8;
+}
+.row-disabled strong,
+.row-disabled td {
+  color: #9aa3ad;
+}
+.analysis-legend {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: #5c646e;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.legend-chip {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.legend-trim {
+  font-size: 10px;
+  color: #b42318;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.analysis-matrix th,
+.analysis-matrix td {
+  text-align: center;
+}
+.analysis-matrix td:first-child,
+.analysis-matrix th:first-child {
+  text-align: left;
+}
+.analysis-cell {
+  font-variant-numeric: tabular-nums;
+  color: #2c3644;
+  position: relative;
+}
+.analysis-cell sup {
+  color: #b42318;
+  font-size: 9px;
+  margin-left: 2px;
+}
+.muted-cell {
+  color: #9aa3ad;
+}
+.analysis-judge-col {
+  min-width: 46px;
+}
+.analysis-judge-col .table-sub {
+  margin-top: 2px;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1100px) {
+  .analysis-charts {
+    grid-template-columns: 1fr;
+  }
+}
+.team-picker .field {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}

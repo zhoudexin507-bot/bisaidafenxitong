@@ -428,3 +428,55 @@ test("stale epoch submissions are rejected with a valid token", async (t) => {
   assert.match(rejected.data.error, /赛程已更新/);
   assert.equal((await f.submit(ts[0], d.projects[0].id, 80)).status, 201);
 });
+
+test("system access closes public screen and judge state outside competition", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "jh-access-"));
+  const f = await fixture(t, { dbPath: join(dir, "db.sqlite") });
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { request, ok, state, configure, complete, rehearse, tokens } = f;
+  await f.login();
+  await configure({ judgeCount: 3, projectCount: 2, rounds: 1, prizes: [1, 1, 0] });
+  await rehearse();
+  await ok("/admin/status", "POST", { status: "running" });
+  // 比赛进行中不允许停用
+  assert.equal((await request("/admin/access", "POST", { closed: true })).status, 409);
+  for (const [i, p] of (await state()).projects.entries()) {
+    await ok(`/admin/projects/${p.id}/status`, "POST", { status: "open" });
+    await complete(p.id, i === 0 ? [70, 85, 90] : [72, 86, 90]);
+    await ok(`/admin/projects/${p.id}/status`, "POST", { status: "closed" });
+  }
+  await ok("/admin/status", "POST", { status: "final" });
+  const [token] = await tokens();
+
+  await ok("/admin/access", "POST", { closed: true });
+  // 重复停用被拒
+  assert.equal((await request("/admin/access", "POST", { closed: true })).status, 409);
+  // 公开接口最小负载：无标题、无名单、无排名
+  const closed = (await request("/state")).data;
+  assert.equal(closed.settings.closed, true);
+  assert.equal(closed.settings.title, undefined);
+  assert.deepEqual(closed.projects, []);
+  assert.deepEqual(closed.ranking, []);
+  assert.deepEqual(closed.awards, []);
+  // 评委端只回 closed 标记，不下发项目
+  const judge = (await request("/judge/state", "GET", undefined, token)).data;
+  assert.equal(judge.closed, true);
+  assert.deepEqual(judge.projects, []);
+  // 管理端不受影响：全量快照可见且停用位已生效
+  const admin = await state();
+  assert.equal(admin.settings.closed, true);
+  assert.equal(admin.projects.length, 2);
+  assert.ok(
+    admin.audit.some((row) => row.action === "停用系统"),
+    "停用系统应写入审计",
+  );
+
+  // 恢复开放：排名画面回到对外可见
+  await ok("/admin/access", "POST", { closed: false });
+  const reopened = (await request("/state")).data;
+  assert.notEqual(reopened.settings.closed, true);
+  assert.equal(reopened.ranking.length, 2);
+  const judgeBack = (await request("/judge/state", "GET", undefined, token)).data;
+  assert.notEqual(judgeBack.closed, true);
+  assert.equal(judgeBack.projects.length, 2);
+});

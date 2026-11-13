@@ -1105,3 +1105,22 @@
     display: none;
   }
 }
+
+/* —— 系统停用：对外大屏只显示未开放，不暴露任何赛事信息 —— */
+.stage-closed {
+  background: #12283c;
+}
+.stage-closed .stage-empty {
+  min-height: 100dvh;
+  gap: 14px;
+}
+.stage-closed .stage-empty h1 {
+  font-size: clamp(34px, 5.6vw, 72px);
+  letter-spacing: 0.08em;
+  color: #e8f0fa;
+}
+.stage-closed .stage-empty p {
+  color: #9db4cd;
+  font-size: clamp(15px, 1.6vw, 20px);
+  letter-spacing: 0.14em;
+}
